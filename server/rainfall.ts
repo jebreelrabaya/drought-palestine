@@ -6,13 +6,15 @@ import {
 import chirpsMonthly from "./data/chirps-monthly.json" with { type: "json" };
 import { CHIRPS_SOURCE_URL, dailyCandidates, readPointsFromCandidates, type ChirpsVersion } from "./chirps";
 import { PALESTINIAN_CITIES, type PalestinianCity } from "./cities";
+import { NASA_SOURCE_URL } from "./nasa";
 
 export { PALESTINIAN_CITIES };
 export type { PalestinianCity };
 
 export type RainfallGranularity = "daily" | "monthly" | "annual";
 
-export type ChirpsSourceLabel = "CHIRPS v3.0" | "CHIRPS v2.0";
+export type DataVersion = ChirpsVersion | "nasa";
+export type ChirpsSourceLabel = "CHIRPS v3.0" | "CHIRPS v2.0" | "NASA POWER";
 
 export type RainfallRecord = {
   period: string;
@@ -45,7 +47,13 @@ export type RainfallSeries = {
   };
 };
 
-type MonthlyEntry = { version: ChirpsVersion; values: Record<string, number | null> };
+type MonthlyEntry = {
+  /** Source for every city in this month unless listed in `sources`. */
+  version: DataVersion;
+  values: Record<string, number | null>;
+  /** Per-city exceptions, e.g. a city CHIRPS cannot cover. */
+  sources?: Record<string, DataVersion>;
+};
 type MonthlyDataset = {
   generatedAt: string;
   product: string;
@@ -70,7 +78,8 @@ const dailyCache = new Map<
   { expiresAt: number; version: ChirpsVersion; preliminary: boolean; data: DailyObservation[] }
 >();
 
-export function sourceLabel(version: ChirpsVersion): ChirpsSourceLabel {
+export function sourceLabel(version: DataVersion): ChirpsSourceLabel {
+  if (version === "nasa") return "NASA POWER";
   return version === "3.0" ? "CHIRPS v3.0" : "CHIRPS v2.0";
 }
 
@@ -236,13 +245,17 @@ async function fetchDailyObservations(
 function monthlyRecords(city: PalestinianCity, start: string, end: string) {
   const startKey = start.slice(0, 7);
   const endKey = end.slice(0, 7);
-  const records: { period: string; precipitationMm: number; version: ChirpsVersion }[] = [];
+  const records: { period: string; precipitationMm: number; version: DataVersion }[] = [];
 
   for (const [period, entry] of Object.entries(MONTHLY.months)) {
     if (period < startKey || period > endKey) continue;
     const value = entry.values[city.id];
     if (value === null || value === undefined) continue;
-    records.push({ period, precipitationMm: value, version: entry.version });
+    records.push({
+      period,
+      precipitationMm: value,
+      version: entry.sources?.[city.id] ?? entry.version,
+    });
   }
 
   return records.sort((left, right) => left.period.localeCompare(right.period));
@@ -271,6 +284,7 @@ export async function getRainfallSeries(input: {
 
   let records: RainfallRecord[];
   let version: ChirpsVersion = "3.0";
+  let monthlyVersion: DataVersion = "3.0";
   let preliminary = false;
   let availableThrough: string | null = null;
 
@@ -285,7 +299,10 @@ export async function getRainfallSeries(input: {
     if (!monthly.length) {
       throw new Error("لا تتوفر بيانات CHIRPS للفترة المطلوبة.");
     }
-    if (monthly.some(record => record.version === "2.0")) version = "2.0";
+    // Report the least-preferred source that contributed, so the label never
+    // overstates the data: NASA beats v2.0 beats v3.0 in "worst wins" order.
+    if (monthly.some(record => record.version === "2.0")) monthlyVersion = "2.0";
+    if (monthly.some(record => record.version === "nasa")) monthlyVersion = "nasa";
     availableThrough = monthly.at(-1)?.period ?? null;
 
     if (input.granularity === "monthly") {
@@ -296,13 +313,14 @@ export async function getRainfallSeries(input: {
         source: sourceLabel(record.version),
       }));
     } else {
-      const seasons = new Map<string, { total: number; days: number; version: ChirpsVersion }>();
+      const seasons = new Map<string, { total: number; days: number; version: DataVersion }>();
       for (const record of monthly) {
         const label = rainySeasonLabel(rainySeasonStartForDate(`${record.period}-01`));
-        const current = seasons.get(label) ?? { total: 0, days: 0, version: "3.0" as ChirpsVersion };
+        const current = seasons.get(label) ?? { total: 0, days: 0, version: "3.0" as DataVersion };
         current.total += record.precipitationMm;
         current.days += monthDays(Number(record.period.slice(0, 4)), Number(record.period.slice(5, 7)));
-        if (record.version === "2.0") current.version = "2.0";
+        if (record.version === "2.0" && current.version === "3.0") current.version = "2.0";
+        if (record.version === "nasa") current.version = "nasa";
         seasons.set(label, current);
       }
       records = Array.from(seasons.entries())
@@ -338,7 +356,7 @@ export async function getRainfallSeries(input: {
       source:
         input.granularity === "daily"
           ? `${sourceLabel(version)} Daily${preliminary ? " (أولي)" : ""}`
-          : `${sourceLabel(version)} Monthly`,
+          : `${sourceLabel(monthlyVersion)} Monthly`,
       parameter: "precipitation",
       unit: "mm",
       requestedStart: range.start,
@@ -353,7 +371,10 @@ export async function getRainfallSeries(input: {
           : input.granularity === "monthly"
             ? "مجاميع CHIRPS الشهرية لكل شهر من الموسم المطري (آب–أيار)"
             : "مجموع مجاميع CHIRPS الشهرية لكل موسم مطري (آب–أيار)",
-      sourceUrl: CHIRPS_SOURCE_URL,
+      sourceUrl:
+        input.granularity !== "daily" && monthlyVersion === "nasa"
+          ? NASA_SOURCE_URL
+          : CHIRPS_SOURCE_URL,
     },
   };
 }

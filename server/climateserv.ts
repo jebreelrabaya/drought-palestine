@@ -21,12 +21,15 @@ export type DailyValue = { date: string; precipitationMm: number };
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * A box small enough to sit inside a single CHIRPS 0.05 deg pixel. A wider box
- * makes the server average neighbouring pixels, which shifted Gaza Jan 2023
- * from 52.88mm to 55.51mm in testing.
+ * Half-width of the sampling box, small enough to sit inside a single CHIRPS
+ * 0.05 deg pixel. Widening it is NOT an acceptable way to work around a masked
+ * cell: ClimateSERV then averages whatever neighbours are valid, and for
+ * Jericho that pulls in the Judean highlands and reports 135.94mm for Jan 2015
+ * against roughly 28mm of truth. A masked cell must come back empty instead.
  */
-function pixelBox(longitude: number, latitude: number) {
-  const half = 0.004;
+const BOX_HALF = 0.004;
+
+function pixelBox(longitude: number, latitude: number, half: number) {
   const ring = [
     [longitude - half, latitude - half],
     [longitude + half, latitude - half],
@@ -115,7 +118,7 @@ export async function fetchDailySeries(
   start: string,
   end: string
 ): Promise<DailyValue[]> {
-  const geometry = pixelBox(longitude, latitude);
+  const geometry = pixelBox(longitude, latitude, BOX_HALF);
   const all: DailyValue[] = [];
   for (const span of windows(start, end)) {
     const id = await submit(geometry, span.start, span.end);

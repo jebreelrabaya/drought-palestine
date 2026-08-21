@@ -23,6 +23,7 @@ import path from "node:path";
 import { PALESTINIAN_CITIES } from "../server/cities";
 import { monthlyUrl, readPointsWithFallback, type ChirpsVersion } from "../server/chirps";
 import { fetchMonthlyTotals } from "../server/climateserv";
+import { fetchMonthlyTotals as fetchNasaMonthlyTotals } from "../server/nasa";
 
 const FIRST_YEAR = 2000;
 // CHC rate-limits with 403 once you hit it hard, so stay gentle and back off.
@@ -37,7 +38,12 @@ const points = PALESTINIAN_CITIES.map(city => ({
   latitude: city.latitude,
 }));
 
-type MonthEntry = { version: ChirpsVersion; values: Record<string, number | null> };
+type DataVersion = ChirpsVersion | "nasa";
+type MonthEntry = {
+  version: DataVersion;
+  values: Record<string, number | null>;
+  sources?: Record<string, DataVersion>;
+};
 type Dataset = {
   generatedAt: string;
   product: string;
@@ -122,7 +128,7 @@ async function backfillFromClimateServ(
     }
     for (const [key, value] of Object.entries(totals)) {
       if (!wanted.has(key)) continue;
-      const entry = months[key] ?? { version: "2.0" as ChirpsVersion, values: {} };
+      const entry = months[key] ?? { version: "2.0" as DataVersion, values: {} };
       // Never let a v2 reading overwrite a v3 one for the same city/month.
       if (entry.version === "3.0" && entry.values[city.id] !== undefined) continue;
       entry.version = entry.version === "3.0" ? "3.0" : "2.0";
@@ -131,6 +137,42 @@ async function backfillFromClimateServ(
     }
   }
   process.stdout.write("\n");
+}
+
+/**
+ * Last resort. Fills city/month cells that neither CHIRPS version could cover
+ * and marks them as NASA-sourced so the UI never calls them CHIRPS. Currently
+ * this is only Jericho, whose cell is masked in the CHIRPS 2.0 grid.
+ */
+async function backfillFromNasa(months: Record<string, MonthEntry>, targets: ReturnType<typeof monthsToBuild>) {
+  const gaps = PALESTINIAN_CITIES.filter(city =>
+    targets.some(target => months[target.key]?.values[city.id] == null)
+  );
+  if (!gaps.length) return;
+  console.log(`  NASA POWER last resort for: ${gaps.map(c => c.id).join(", ")}`);
+
+  const start = `${FIRST_YEAR}-01-01`;
+  const end = new Date().toISOString().slice(0, 10);
+  for (const city of gaps) {
+    let totals: Record<string, number>;
+    try {
+      totals = await fetchNasaMonthlyTotals(city.longitude, city.latitude, start, end);
+    } catch (error) {
+      console.warn(`  ${city.id} NASA fetch failed: ${(error as Error).message}`);
+      continue;
+    }
+    let filled = 0;
+    for (const target of targets) {
+      const entry = months[target.key];
+      if (!entry || entry.values[city.id] != null) continue;
+      const value = totals[target.key];
+      if (value === undefined) continue;
+      entry.values[city.id] = value;
+      entry.sources = { ...(entry.sources ?? {}), [city.id]: "nasa" };
+      filled++;
+    }
+    console.log(`    ${city.id}: filled ${filled} months from NASA POWER`);
+  }
 }
 
 async function main() {
@@ -148,10 +190,16 @@ async function main() {
     console.log(`  ${targets.length} months to fetch or upgrade`);
     if (targets.length) await backfillFromChc(months, targets);
   } else {
-    const targets = all.filter(t => !months[t.key]);
-    console.log(`  ${targets.length} months missing`);
+    // Any month that is absent, or present but missing a city, is a target.
+    const targets = all.filter(
+      t => !months[t.key] || PALESTINIAN_CITIES.some(c => months[t.key].values[c.id] === undefined)
+    );
+    console.log(`  ${targets.length} months incomplete`);
     if (targets.length) await backfillFromClimateServ(months, targets);
   }
+
+  // Anything CHIRPS still cannot cover falls back to NASA POWER, per city.
+  await backfillFromNasa(months, all);
 
   const versions: Record<string, number> = {};
   for (const entry of Object.values(months)) versions[entry.version] = (versions[entry.version] ?? 0) + 1;
@@ -171,8 +219,15 @@ async function main() {
       0
     )}\n`
   );
+  let nasaCells = 0;
+  for (const entry of Object.values(months)) {
+    nasaCells += Object.values(entry.sources ?? {}).filter(v => v === "nasa").length;
+  }
   const keys = Object.keys(ordered);
-  console.log(`wrote ${keys.length} months (${keys[0]} .. ${keys.at(-1)}) v3=${versions["3.0"] ?? 0} v2=${versions["2.0"] ?? 0}`);
+  console.log(
+    `wrote ${keys.length} months (${keys[0]} .. ${keys.at(-1)}) ` +
+      `v3=${versions["3.0"] ?? 0} v2=${versions["2.0"] ?? 0} nasa-cells=${nasaCells}`
+  );
 }
 
 main().catch(error => {

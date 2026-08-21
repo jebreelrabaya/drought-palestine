@@ -20,6 +20,11 @@ import { PALESTINIAN_CITIES } from "../server/cities";
 const API = "https://appeears.earthdatacloud.nasa.gov/api";
 const PRODUCT = "MOD13Q1.061";
 const LAYER = "_250m_16_days_NDVI";
+const RELIABILITY_LAYER = "_250m_16_days_pixel_reliability";
+// MOD13Q1 has no per-pixel cloud percentage; pixel reliability is the accuracy
+// control: 0 good, 1 marginal, 2 snow/ice, 3 cloudy, -1 fill. Keep only clear
+// (good/marginal) composites so cloud-contaminated readings never enter a month.
+const MAX_RELIABILITY = 1;
 const FIRST_DATE = "01-01-2000"; // MM-DD-YYYY; MOD13Q1 begins 2000-02-18
 const OUT = path.resolve(import.meta.dirname, "..", "server", "data", "ndvi-monthly.json");
 
@@ -49,7 +54,10 @@ async function submitTask(token: string, endDate: string): Promise<string> {
     task_name: `palestine-ndvi-${Date.now()}`,
     params: {
       dates: [{ startDate: FIRST_DATE, endDate }],
-      layers: [{ product: PRODUCT, layer: LAYER }],
+      layers: [
+        { product: PRODUCT, layer: LAYER },
+        { product: PRODUCT, layer: RELIABILITY_LAYER },
+      ],
       coordinates: PALESTINIAN_CITIES.map(city => ({
         latitude: city.latitude,
         longitude: city.longitude,
@@ -107,6 +115,7 @@ function aggregate(csv: string): Record<string, MonthAgg> {
   const catIdx = header.findIndex(h => /^Category$/i.test(h));
   const dateIdx = header.findIndex(h => /^Date$/i.test(h));
   const ndviIdx = header.findIndex(h => h.includes("250m_16_days_NDVI") && !/QA|Quality|Reliability/i.test(h));
+  const reliaIdx = header.findIndex(h => /pixel_reliability/i.test(h));
   if (dateIdx < 0 || ndviIdx < 0) throw new Error(`Unexpected AppEEARS CSV header: ${header.join("|")}`);
   const keyIdx = catIdx >= 0 ? catIdx : idIdx;
 
@@ -117,6 +126,9 @@ function aggregate(csv: string): Record<string, MonthAgg> {
     const date = (cols[dateIdx] ?? "").trim(); // AppEEARS emits YYYY-MM-DD
     let value = Number(cols[ndviIdx]);
     if (!cityId || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(value)) continue;
+    // Cloud/quality screen: only clear (good/marginal) composites.
+    const reliability = reliaIdx >= 0 ? Number(cols[reliaIdx]) : 0;
+    if (!Number.isFinite(reliability) || reliability < 0 || reliability > MAX_RELIABILITY) continue;
     if (Math.abs(value) > 1.5) value /= 10000; // raw DN (×10000) rather than scaled
     if (value < -0.2 || value > 1) continue; // drop fill / out-of-range composites
     const period = date.slice(0, 7);
@@ -157,7 +169,7 @@ async function main() {
     `${JSON.stringify(
       {
         generatedAt: new Date().toISOString(),
-        product: "MODIS MOD13Q1.061 250m 16-day NDVI (monthly mean)",
+        product: "MODIS MOD13Q1.061 250m 16-day NDVI (monthly mean, clear composites only)",
         cities: PALESTINIAN_CITIES.map(c => c.id),
         months: ordered,
       },

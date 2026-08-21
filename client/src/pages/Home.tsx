@@ -152,7 +152,7 @@ function DualStatCard({ icon: Icon, label, accent, left, right }: {
   );
 }
 
-type DisplaySeries = "all" | "rainfall" | "spi6" | "spi12" | "spei6" | "spei12";
+type DisplaySeries = "all" | "rainfall" | "spi6" | "spi12" | "spei6" | "spei12" | "ndvi";
 const displayOptions: Array<{ value: DisplaySeries; label: string }> = [
   { value: "all", label: "الكل" },
   { value: "rainfall", label: "الهطول" },
@@ -160,6 +160,7 @@ const displayOptions: Array<{ value: DisplaySeries; label: string }> = [
   { value: "spi12", label: "SPI-12" },
   { value: "spei6", label: "SPEI-6" },
   { value: "spei12", label: "SPEI-12" },
+  { value: "ndvi", label: "NDVI" },
 ];
 
 export default function Home() {
@@ -411,8 +412,9 @@ export default function Home() {
                         <CartesianGrid vertical={false} stroke="#e7eee9" strokeDasharray="3 5" />
                         <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: "#70817c", fontSize: 11 }} minTickGap={26} />
                         <YAxis yAxisId="mm" hide={!(display === "all" || display === "rainfall")} axisLine={false} tickLine={false} tick={{ fill: "#70817c", fontSize: 11 }} width={42} />
-                        <YAxis yAxisId="spi" orientation="right" domain={[-3, 3]} ticks={[-2, -1, 0, 1, 2]} hide={display === "rainfall"} axisLine={false} tickLine={false} tick={{ fill: "#9a7bb5", fontSize: 11 }} width={30} />
-                        {display !== "rainfall" && <ReferenceLine yAxisId="spi" y={0} stroke="#cbd5e1" strokeDasharray="2 4" />}
+                        <YAxis yAxisId="spi" orientation="right" domain={[-3, 3]} ticks={[-2, -1, 0, 1, 2]} hide={display === "rainfall" || display === "ndvi"} axisLine={false} tickLine={false} tick={{ fill: "#9a7bb5", fontSize: 11 }} width={30} />
+                        <YAxis yAxisId="ndvi" orientation="right" domain={[0, 1]} ticks={[0, 0.25, 0.5, 0.75, 1]} hide={display !== "ndvi"} axisLine={false} tickLine={false} tick={{ fill: "#2f9e44", fontSize: 11 }} width={34} />
+                        {display !== "rainfall" && display !== "ndvi" && <ReferenceLine yAxisId="spi" y={0} stroke="#cbd5e1" strokeDasharray="2 4" />}
                         <Tooltip cursor={{ fill: "#f1f8f5" }} contentStyle={{ borderRadius: 14, border: "1px solid #dcebe5", fontFamily: "Noto Sans Arabic", fontSize: 12 }} labelFormatter={(_, payload) => payload?.[0]?.payload?.fullLabel ?? ""} formatter={(value: number, name: string) => (name === "الهطول" ? [`${arabicNumber(value, 2)} ملم`, "الهطول"] : [arabicNumber(value, 2), name])} />
                         <Legend wrapperStyle={{ fontSize: 11, fontFamily: "Noto Sans Arabic" }} />
                         {(display === "all" || display === "rainfall") && (chartType === "line" ? (
@@ -424,6 +426,7 @@ export default function Home() {
                         {(display === "all" || display === "spi12") && <Line yAxisId="spi" name="SPI-12" type="monotone" dataKey="spi12" stroke="#7a52b3" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls />}
                         {(display === "all" || display === "spei6") && <Line yAxisId="spi" name="SPEI-6" type="monotone" dataKey="spei6" stroke="#c0562f" strokeWidth={2} dot={false} connectNulls />}
                         {(display === "all" || display === "spei12") && <Line yAxisId="spi" name="SPEI-12" type="monotone" dataKey="spei12" stroke="#2777b9" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls />}
+                        {(display === "all" || display === "ndvi") && <Line yAxisId="ndvi" name="NDVI" type="monotone" dataKey="ndvi" stroke="#2f9e44" strokeWidth={2} dot={false} connectNulls />}
                       </ComposedChart>
                     ) : chartType === "line" ? (
                       <RechartsLineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>

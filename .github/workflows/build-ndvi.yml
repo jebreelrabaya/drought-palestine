@@ -1,0 +1,46 @@
+name: Build NDVI dataset
+
+# Regenerates server/data/ndvi-monthly.json from NASA AppEEARS (MODIS NDVI) and
+# commits it. MODIS NDVI is a 16-day composite, so a monthly run keeps it fresh.
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 3 5 * *" # 03:00 UTC on the 5th of each month
+
+jobs:
+  build-ndvi:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Generate NDVI dataset
+        env:
+          EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+        run: pnpm build:ndvi
+
+      - name: Commit updated dataset
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- server/data/ndvi-monthly.json; then
+            echo "No NDVI changes."
+          else
+            git add server/data/ndvi-monthly.json
+            git commit -m "Update NDVI dataset (automated)"
+            git push
+          fi

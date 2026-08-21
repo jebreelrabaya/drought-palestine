@@ -6,6 +6,7 @@ import {
 } from "@shared/const";
 import chirpsMonthly from "./data/chirps-monthly.json" with { type: "json" };
 import tempMonthly from "./data/temp-monthly.json" with { type: "json" };
+import ndviMonthly from "./data/ndvi-monthly.json" with { type: "json" };
 import { CHIRPS_SOURCE_URL, dailyCandidates, readPointsFromCandidates, type ChirpsVersion } from "./chirps";
 import { PALESTINIAN_CITIES, type PalestinianCity } from "./cities";
 import { NASA_SOURCE_URL } from "./nasa";
@@ -30,6 +31,7 @@ export type RainfallRecord = {
   spi12?: number | null;
   spei6?: number | null;
   spei12?: number | null;
+  ndvi?: number | null; // MODIS vegetation greenness (0–1)
 };
 
 export type RainfallSeries = {
@@ -84,6 +86,9 @@ type TempDataset = {
   months: Record<string, { t2m: Record<string, number | null>; tmax: Record<string, number | null>; tmin: Record<string, number | null> }>;
 };
 const TEMP = tempMonthly as TempDataset;
+
+type NdviDataset = { months: Record<string, Record<string, number | null>> };
+const NDVI = ndviMonthly as NdviDataset;
 
 /**
  * What the precomputed dataset actually covers. CHIRPS monthly finals lag the
@@ -385,6 +390,7 @@ export async function getRainfallSeries(input: {
         spi12: spi12.get(record.period) ?? null,
         spei6: spei6.get(record.period) ?? null,
         spei12: spei12.get(record.period) ?? null,
+        ndvi: NDVI.months[record.period]?.[city.id] ?? null,
       }));
 
       // Season summary: index values at the last shown month, and temperature extremes.

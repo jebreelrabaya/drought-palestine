@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 type RainfallExportPayload = {
   city: { name: string; latitude: number; longitude: number };
   granularity: "daily" | "monthly" | "annual";
-  records: Array<{ period: string; precipitationMm: number; daysObserved: number; source: string; spi6?: number | null; spi12?: number | null }>;
+  records: Array<{ period: string; precipitationMm: number; daysObserved: number; source: string; spi6?: number | null; spi12?: number | null; spei6?: number | null; spei12?: number | null }>;
   metadata: {
     source: string;
     parameter: string;
@@ -29,7 +29,12 @@ export function exportRainfallToXlsx(payload: RainfallExportPayload) {
     الفترة: record.period,
     "الهطول (ملم)": record.precipitationMm,
     ...(withSpi
-      ? { "SPI-6": record.spi6 ?? "", "SPI-12": record.spi12 ?? "" }
+      ? {
+          "SPI-6": record.spi6 ?? "",
+          "SPI-12": record.spi12 ?? "",
+          "SPEI-6": record.spei6 ?? "",
+          "SPEI-12": record.spei12 ?? "",
+        }
       : {}),
     "عدد الأيام المرصودة": record.daysObserved,
     المصدر: record.source,
@@ -52,7 +57,7 @@ export function exportRainfallToXlsx(payload: RainfallExportPayload) {
   const dataSheet = XLSX.utils.json_to_sheet(dataRows);
   const sourceSheet = XLSX.utils.json_to_sheet(metadataRows);
   dataSheet["!cols"] = withSpi
-    ? [{ wch: 18 }, { wch: 18 }, { wch: 10 }, { wch: 10 }, { wch: 22 }, { wch: 16 }]
+    ? [{ wch: 18 }, { wch: 18 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 22 }, { wch: 16 }]
     : [{ wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 16 }];
   sourceSheet["!cols"] = [{ wch: 22 }, { wch: 70 }];
   XLSX.utils.book_append_sheet(workbook, dataSheet, "بيانات الأمطار");

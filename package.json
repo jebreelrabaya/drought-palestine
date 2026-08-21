@@ -12,6 +12,7 @@
     "test": "vitest run",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
     "build:netlify": "vite build",
+    "build:temp": "tsx scripts/build-temp.ts",
     "build:chirps": "tsx scripts/build-chirps.ts"
   },
   "dependencies": {

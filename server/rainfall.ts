@@ -5,10 +5,12 @@ import {
   todayIso,
 } from "@shared/const";
 import chirpsMonthly from "./data/chirps-monthly.json" with { type: "json" };
+import tempMonthly from "./data/temp-monthly.json" with { type: "json" };
 import { CHIRPS_SOURCE_URL, dailyCandidates, readPointsFromCandidates, type ChirpsVersion } from "./chirps";
 import { PALESTINIAN_CITIES, type PalestinianCity } from "./cities";
 import { NASA_SOURCE_URL } from "./nasa";
 import { computeSpi, type MonthlyPoint } from "./spi";
+import { computeSpei, type TempPoint } from "./spei";
 
 export { PALESTINIAN_CITIES };
 export type { PalestinianCity };
@@ -23,9 +25,11 @@ export type RainfallRecord = {
   precipitationMm: number;
   daysObserved: number;
   source: ChirpsSourceLabel;
-  // Standardized Precipitation Index, populated for the monthly granularity only.
+  // Drought indices, populated for the monthly granularity only.
   spi6?: number | null;
   spi12?: number | null;
+  spei6?: number | null;
+  spei12?: number | null;
 };
 
 export type RainfallSeries = {
@@ -38,6 +42,13 @@ export type RainfallSeries = {
     peakMm: number;
     peakPeriod: string | null;
     recordCount: number;
+    // Season-end drought summary + temperature extremes (monthly granularity only).
+    seasonHighTempC?: number | null;
+    seasonLowTempC?: number | null;
+    spi6End?: number | null;
+    spi12End?: number | null;
+    spei6End?: number | null;
+    spei12End?: number | null;
   };
   metadata: {
     source: string;
@@ -68,6 +79,11 @@ type MonthlyDataset = {
 
 const MONTHLY = chirpsMonthly as MonthlyDataset;
 const MONTH_KEYS = Object.keys(MONTHLY.months).sort();
+
+type TempDataset = {
+  months: Record<string, { t2m: Record<string, number | null>; tmax: Record<string, number | null>; tmin: Record<string, number | null> }>;
+};
+const TEMP = tempMonthly as TempDataset;
 
 /**
  * What the precomputed dataset actually covers. CHIRPS monthly finals lag the
@@ -272,6 +288,15 @@ function fullMonthlySeries(cityId: string): MonthlyPoint[] {
   }));
 }
 
+/** Precipitation + temperature joined over the full record — SPEI needs both. */
+function fullTempSeries(cityId: string): TempPoint[] {
+  return MONTH_KEYS.map(period => ({
+    period,
+    precipitationMm: MONTHLY.months[period].values[cityId] ?? null,
+    tempC: TEMP.months[period]?.t2m[cityId] ?? null,
+  }));
+}
+
 /** Monthly and annual views read the precomputed CHIRPS monthly totals. */
 function monthlyRecords(city: PalestinianCity, start: string, end: string) {
   const startKey = start.slice(0, 7);
@@ -318,6 +343,12 @@ export async function getRainfallSeries(input: {
   let monthlyVersion: DataVersion = "3.0";
   let preliminary = false;
   let availableThrough: string | null = null;
+  let seasonHighTempC: number | null = null;
+  let seasonLowTempC: number | null = null;
+  let spi6End: number | null = null;
+  let spi12End: number | null = null;
+  let spei6End: number | null = null;
+  let spei12End: number | null = null;
 
   if (input.granularity === "daily") {
     const daily = await fetchDailyObservations(city, range.start, range.end);
@@ -340,10 +371,11 @@ export async function getRainfallSeries(input: {
     availableThrough = monthly.at(-1)?.period ?? null;
 
     if (input.granularity === "monthly") {
-      // SPI is fitted over the whole record, then attached to the shown months.
-      const fullSeries = fullMonthlySeries(city.id);
-      const spi6 = computeSpi(fullSeries, 6);
-      const spi12 = computeSpi(fullSeries, 12);
+      // Indices are fitted over the whole record, then attached to the shown months.
+      const spi6 = computeSpi(fullMonthlySeries(city.id), 6);
+      const spi12 = computeSpi(fullMonthlySeries(city.id), 12);
+      const spei6 = computeSpei(fullTempSeries(city.id), city.latitude, 6);
+      const spei12 = computeSpei(fullTempSeries(city.id), city.latitude, 12);
       records = monthly.map(record => ({
         period: record.period,
         precipitationMm: round(record.precipitationMm),
@@ -351,7 +383,22 @@ export async function getRainfallSeries(input: {
         source: sourceLabel(record.version),
         spi6: spi6.get(record.period) ?? null,
         spi12: spi12.get(record.period) ?? null,
+        spei6: spei6.get(record.period) ?? null,
+        spei12: spei12.get(record.period) ?? null,
       }));
+
+      // Season summary: index values at the last shown month, and temperature extremes.
+      const last = records.at(-1);
+      spi6End = last?.spi6 ?? null;
+      spi12End = last?.spi12 ?? null;
+      spei6End = last?.spei6 ?? null;
+      spei12End = last?.spei12 ?? null;
+      for (const record of records) {
+        const high = TEMP.months[record.period]?.tmax[city.id];
+        const low = TEMP.months[record.period]?.tmin[city.id];
+        if (high !== null && high !== undefined) seasonHighTempC = seasonHighTempC === null ? high : Math.max(seasonHighTempC, high);
+        if (low !== null && low !== undefined) seasonLowTempC = seasonLowTempC === null ? low : Math.min(seasonLowTempC, low);
+      }
     } else {
       const seasons = new Map<string, { total: number; days: number; version: DataVersion }>();
       for (const record of monthly) {
@@ -391,6 +438,12 @@ export async function getRainfallSeries(input: {
       peakMm: peak?.precipitationMm ?? 0,
       peakPeriod: peak?.period ?? null,
       recordCount: records.length,
+      seasonHighTempC,
+      seasonLowTempC,
+      spi6End,
+      spi12End,
+      spei6End,
+      spei12End,
     },
     metadata: {
       source:

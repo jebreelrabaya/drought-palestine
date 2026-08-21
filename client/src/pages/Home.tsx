@@ -11,6 +11,7 @@ import {
   Download,
   ExternalLink,
   FileSpreadsheet,
+  Gauge,
   Info,
   LineChart,
   Loader2,
@@ -18,6 +19,7 @@ import {
   RefreshCw,
   Satellite,
   TableProperties,
+  Thermometer,
   TrendingUp,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -120,12 +122,53 @@ function StatCard({ icon: Icon, label, value, accent }: { icon: typeof CloudRain
   );
 }
 
+// A card showing two labelled values side by side (temperature, or a pair of indices).
+function DualStatCard({ icon: Icon, label, accent, left, right }: {
+  icon: typeof CloudRain;
+  label: string;
+  accent: string;
+  left: { caption: string; value: string; color?: string };
+  right: { caption: string; value: string; color?: string };
+}) {
+  return (
+    <div className="rounded-[1.65rem] border border-white/75 bg-white/80 p-5 shadow-[0_16px_40px_-28px_rgba(16,72,70,0.55)] backdrop-blur-sm">
+      <div className="flex items-center justify-between">
+        <span className={`grid size-10 place-items-center rounded-2xl ${accent}`}>
+          <Icon className="size-5" />
+        </span>
+        <span className="text-xs font-semibold text-slate-400">{label}</span>
+      </div>
+      <div className="mt-4 flex items-end justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-semibold text-slate-400">{left.caption}</p>
+          <p className="text-xl font-bold tracking-tight" style={{ color: left.color ?? "#1e293b" }}>{left.value}</p>
+        </div>
+        <div className="text-left">
+          <p className="text-[10px] font-semibold text-slate-400">{right.caption}</p>
+          <p className="text-xl font-bold tracking-tight" style={{ color: right.color ?? "#1e293b" }}>{right.value}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type DisplaySeries = "all" | "rainfall" | "spi6" | "spi12" | "spei6" | "spei12";
+const displayOptions: Array<{ value: DisplaySeries; label: string }> = [
+  { value: "all", label: "الكل" },
+  { value: "rainfall", label: "الهطول" },
+  { value: "spi6", label: "SPI-6" },
+  { value: "spi12", label: "SPI-12" },
+  { value: "spei6", label: "SPEI-6" },
+  { value: "spei12", label: "SPEI-12" },
+];
+
 export default function Home() {
   const [cityId, setCityId] = useState("gaza");
   const [granularity, setGranularity] = useState<Granularity>("monthly");
   const [seasonStartYear, setSeasonStartYear] = useState(String(currentSeason));
   const [month, setMonth] = useState("8");
   const [chartType, setChartType] = useState<"line" | "bar">("line");
+  const [display, setDisplay] = useState<DisplaySeries>("all");
 
   const catalogQuery = trpc.rainfall.catalog.useQuery();
   // CHIRPS monthly finals lag ~3 weeks, so the calendar season is usually still
@@ -312,18 +355,53 @@ export default function Home() {
 
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <StatCard icon={CloudRain} label="إجمالي الهطول" value={`${arabicNumber(series.summary.totalMm, 1)} ملم`} accent="bg-[#e6f5ef] text-[#0b806f]" />
-              <StatCard icon={AreaChart} label={granularity === "annual" ? "متوسط المواسم" : "متوسط الفترة"} value={`${arabicNumber(series.summary.averageMm, 1)} ملم`} accent="bg-[#e8f1fb] text-[#2776b9]" />
-              <StatCard icon={TrendingUp} label="أعلى قراءة" value={`${arabicNumber(series.summary.peakMm, 1)} ملم`} accent="bg-[#fff4db] text-[#b97c12]" />
-              <StatCard icon={TableProperties} label="سجلات معروضة" value={arabicNumber(series.summary.recordCount)} accent="bg-[#f1ebfb] text-[#7a52b3]" />
+              {granularity === "monthly" ? (
+                <>
+                  <DualStatCard
+                    icon={Thermometer}
+                    label="الحرارة (الموسم)"
+                    accent="bg-[#fdeede] text-[#c2610c]"
+                    left={{ caption: "الأعلى", value: series.summary.seasonHighTempC == null ? "—" : `${arabicNumber(series.summary.seasonHighTempC, 1)}°`, color: "#c0562f" }}
+                    right={{ caption: "الأدنى", value: series.summary.seasonLowTempC == null ? "—" : `${arabicNumber(series.summary.seasonLowTempC, 1)}°`, color: "#2776b9" }}
+                  />
+                  <DualStatCard
+                    icon={Gauge}
+                    label="مؤشر SPI (نهاية الموسم)"
+                    accent="bg-[#eaf3fb] text-[#2776b9]"
+                    left={{ caption: "SPI-6", value: series.summary.spi6End == null ? "—" : arabicNumber(series.summary.spi6End, 2), color: spiCategory(series.summary.spi6End).color }}
+                    right={{ caption: "SPI-12", value: series.summary.spi12End == null ? "—" : arabicNumber(series.summary.spi12End, 2), color: spiCategory(series.summary.spi12End).color }}
+                  />
+                  <DualStatCard
+                    icon={Gauge}
+                    label="مؤشر SPEI (نهاية الموسم)"
+                    accent="bg-[#f1ebfb] text-[#7a52b3]"
+                    left={{ caption: "SPEI-6", value: series.summary.spei6End == null ? "—" : arabicNumber(series.summary.spei6End, 2), color: spiCategory(series.summary.spei6End).color }}
+                    right={{ caption: "SPEI-12", value: series.summary.spei12End == null ? "—" : arabicNumber(series.summary.spei12End, 2), color: spiCategory(series.summary.spei12End).color }}
+                  />
+                </>
+              ) : (
+                <>
+                  <StatCard icon={AreaChart} label={granularity === "annual" ? "متوسط المواسم" : "متوسط الفترة"} value={`${arabicNumber(series.summary.averageMm, 1)} ملم`} accent="bg-[#e8f1fb] text-[#2776b9]" />
+                  <StatCard icon={TrendingUp} label="أعلى قراءة" value={`${arabicNumber(series.summary.peakMm, 1)} ملم`} accent="bg-[#fff4db] text-[#b97c12]" />
+                  <StatCard icon={TableProperties} label="سجلات معروضة" value={arabicNumber(series.summary.recordCount)} accent="bg-[#f1ebfb] text-[#7a52b3]" />
+                </>
+              )}
             </div>
 
             <div className="mt-5 grid gap-5 xl:grid-cols-[1.55fr_.85fr]">
               <section className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-[0_12px_35px_-30px_rgba(8,70,65,.45)]">
                 <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-                  <div><p className="text-sm font-bold text-slate-800">توزيع الهطول عبر الزمن</p><p className="mt-1 text-xs text-slate-500">{granularity === "monthly" ? "الأعمدة/الخط: الهطول (ملم) — الخطان SPI-6 وSPI-12 مؤشرا الجفاف (المحور الأيمن؛ أقل من صفر = جفاف)." : "استكشف القيم المجمّعة بحسب الاختيار الحالي."}</p></div>
-                  <div className="inline-flex w-fit rounded-xl bg-slate-100 p-1">
-                    <button type="button" onClick={() => setChartType("line")} className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${chartType === "line" ? "bg-white text-[#0b5b55] shadow-sm" : "text-slate-500"}`}><LineChart className="size-3.5" />خطي</button>
-                    <button type="button" onClick={() => setChartType("bar")} className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${chartType === "bar" ? "bg-white text-[#0b5b55] shadow-sm" : "text-slate-500"}`}><BarChart3 className="size-3.5" />أعمدة</button>
+                  <div><p className="text-sm font-bold text-slate-800">توزيع الهطول ومؤشرات الجفاف</p><p className="mt-1 text-xs text-slate-500">{granularity === "monthly" ? "الهطول (ملم) على المحور الأيسر، ومؤشرات SPI/SPEI على المحور الأيمن (أقل من صفر = جفاف). اختر «العرض» لإفراد مؤشر واحد." : "استكشف القيم المجمّعة بحسب الاختيار الحالي."}</p></div>
+                  <div className="flex w-fit items-center gap-2">
+                    {granularity === "monthly" && (
+                      <div className="select-shell !mt-0"><select value={display} onChange={event => setDisplay(event.target.value as DisplaySeries)} aria-label="اختيار السلسلة المعروضة" className="!py-1.5 text-xs">
+                        {displayOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select><ChevronDown className="select-chevron" /></div>
+                    )}
+                    <div className="inline-flex w-fit rounded-xl bg-slate-100 p-1">
+                      <button type="button" onClick={() => setChartType("line")} className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${chartType === "line" ? "bg-white text-[#0b5b55] shadow-sm" : "text-slate-500"}`}><LineChart className="size-3.5" />خطي</button>
+                      <button type="button" onClick={() => setChartType("bar")} className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${chartType === "bar" ? "bg-white text-[#0b5b55] shadow-sm" : "text-slate-500"}`}><BarChart3 className="size-3.5" />أعمدة</button>
+                    </div>
                   </div>
                 </div>
                 <div className="h-[330px] px-1 pb-3 pt-5 sm:px-4">
@@ -332,18 +410,20 @@ export default function Home() {
                       <ComposedChart data={chartData} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
                         <CartesianGrid vertical={false} stroke="#e7eee9" strokeDasharray="3 5" />
                         <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: "#70817c", fontSize: 11 }} minTickGap={26} />
-                        <YAxis yAxisId="mm" axisLine={false} tickLine={false} tick={{ fill: "#70817c", fontSize: 11 }} width={42} />
-                        <YAxis yAxisId="spi" orientation="right" domain={[-3, 3]} ticks={[-2, -1, 0, 1, 2]} axisLine={false} tickLine={false} tick={{ fill: "#9a7bb5", fontSize: 11 }} width={30} />
-                        <ReferenceLine yAxisId="spi" y={0} stroke="#cbd5e1" strokeDasharray="2 4" />
-                        <Tooltip cursor={{ fill: "#f1f8f5" }} contentStyle={{ borderRadius: 14, border: "1px solid #dcebe5", fontFamily: "Noto Sans Arabic", fontSize: 12 }} labelFormatter={(_, payload) => payload?.[0]?.payload?.fullLabel ?? ""} formatter={(value: number, name: string) => (name.startsWith("SPI") ? [arabicNumber(value, 2), name] : [`${arabicNumber(value, 2)} ملم`, "الهطول"])} />
+                        <YAxis yAxisId="mm" hide={!(display === "all" || display === "rainfall")} axisLine={false} tickLine={false} tick={{ fill: "#70817c", fontSize: 11 }} width={42} />
+                        <YAxis yAxisId="spi" orientation="right" domain={[-3, 3]} ticks={[-2, -1, 0, 1, 2]} hide={display === "rainfall"} axisLine={false} tickLine={false} tick={{ fill: "#9a7bb5", fontSize: 11 }} width={30} />
+                        {display !== "rainfall" && <ReferenceLine yAxisId="spi" y={0} stroke="#cbd5e1" strokeDasharray="2 4" />}
+                        <Tooltip cursor={{ fill: "#f1f8f5" }} contentStyle={{ borderRadius: 14, border: "1px solid #dcebe5", fontFamily: "Noto Sans Arabic", fontSize: 12 }} labelFormatter={(_, payload) => payload?.[0]?.payload?.fullLabel ?? ""} formatter={(value: number, name: string) => (name === "الهطول" ? [`${arabicNumber(value, 2)} ملم`, "الهطول"] : [arabicNumber(value, 2), name])} />
                         <Legend wrapperStyle={{ fontSize: 11, fontFamily: "Noto Sans Arabic" }} />
-                        {chartType === "line" ? (
+                        {(display === "all" || display === "rainfall") && (chartType === "line" ? (
                           <Line yAxisId="mm" name="الهطول" type="monotone" dataKey="precipitationMm" stroke="#0b8d80" strokeWidth={3} dot={false} activeDot={{ r: 5, fill: "#e5b759", strokeWidth: 0 }} />
                         ) : (
                           <Bar yAxisId="mm" name="الهطول" dataKey="precipitationMm" fill="#0b8d80" radius={[6, 6, 0, 0]} maxBarSize={32} />
-                        )}
-                        <Line yAxisId="spi" name="SPI-6" type="monotone" dataKey="spi6" stroke="#c2760c" strokeWidth={2} dot={false} connectNulls />
-                        <Line yAxisId="spi" name="SPI-12" type="monotone" dataKey="spi12" stroke="#7a52b3" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls />
+                        ))}
+                        {(display === "all" || display === "spi6") && <Line yAxisId="spi" name="SPI-6" type="monotone" dataKey="spi6" stroke="#c2760c" strokeWidth={2} dot={false} connectNulls />}
+                        {(display === "all" || display === "spi12") && <Line yAxisId="spi" name="SPI-12" type="monotone" dataKey="spi12" stroke="#7a52b3" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls />}
+                        {(display === "all" || display === "spei6") && <Line yAxisId="spi" name="SPEI-6" type="monotone" dataKey="spei6" stroke="#c0562f" strokeWidth={2} dot={false} connectNulls />}
+                        {(display === "all" || display === "spei12") && <Line yAxisId="spi" name="SPEI-12" type="monotone" dataKey="spei12" stroke="#2777b9" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls />}
                       </ComposedChart>
                     ) : chartType === "line" ? (
                       <RechartsLineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -384,13 +464,15 @@ export default function Home() {
             <section className="mt-5 overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-[0_12px_35px_-30px_rgba(8,70,65,.45)]">
               <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div><h3 className="font-[Noto_Kufi_Arabic] text-sm font-bold text-slate-800">الجدول التفاعلي</h3><p className="mt-1 text-xs text-slate-500">البيانات المعروضة هي نفسها التي سيحتويها ملف Excel.</p></div><span className="w-fit rounded-full bg-[#e9f5ef] px-3 py-1 text-xs font-bold text-[#0b7067]">{arabicNumber(displayRecords.length)} سجل</span></div>
               <div className="max-h-[570px] overflow-auto">
-                <table className="w-full min-w-[760px] text-right text-sm">
-                  <thead className="sticky top-0 z-10 bg-[#f8fbf9] text-xs font-bold text-slate-500"><tr><th className="px-6 py-4">الفترة</th><th className="px-6 py-4">الهطول</th>{granularity === "monthly" && <><th className="px-6 py-4">SPI-6</th><th className="px-6 py-4">SPI-12</th></>}<th className="px-6 py-4">أيام مرصودة</th><th className="px-6 py-4">المصدر</th></tr></thead>
+                <table className="w-full min-w-[900px] text-right text-sm">
+                  <thead className="sticky top-0 z-10 bg-[#f8fbf9] text-xs font-bold text-slate-500"><tr><th className="px-6 py-4">الفترة</th><th className="px-6 py-4">الهطول</th>{granularity === "monthly" && <><th className="px-6 py-4">SPI-6</th><th className="px-6 py-4">SPI-12</th><th className="px-6 py-4">SPEI-6</th><th className="px-6 py-4">SPEI-12</th></>}<th className="px-6 py-4">أيام مرصودة</th><th className="px-6 py-4">المصدر</th></tr></thead>
                   <tbody className="divide-y divide-slate-100">
                     {displayRecords.map(record => {
-                      const cat6 = spiCategory(record.spi6);
-                      const cat12 = spiCategory(record.spi12);
-                      return <tr key={record.period} className="transition hover:bg-[#f7fbf9]"><td className="whitespace-nowrap px-6 py-4 font-semibold text-slate-700">{formatPeriod(record.period, granularity)}</td><td className="whitespace-nowrap px-6 py-4 font-bold text-[#0b7067]">{arabicNumber(record.precipitationMm, 2)} <span className="text-xs font-medium text-slate-400">ملم</span></td>{granularity === "monthly" && <><td className="whitespace-nowrap px-6 py-4 font-bold" style={{ color: cat6.color }} title={cat6.label}>{record.spi6 === null || record.spi6 === undefined ? "—" : arabicNumber(record.spi6, 2)}</td><td className="whitespace-nowrap px-6 py-4 font-bold" style={{ color: cat12.color }} title={cat12.label}>{record.spi12 === null || record.spi12 === undefined ? "—" : arabicNumber(record.spi12, 2)}</td></>}<td className="px-6 py-4 text-slate-600">{arabicNumber(record.daysObserved)}</td><td className="px-6 py-4"><span className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">{record.source}</span></td></tr>;
+                      const idxCell = (value: number | null | undefined) => {
+                        const cat = spiCategory(value);
+                        return <td className="whitespace-nowrap px-6 py-4 font-bold" style={{ color: cat.color }} title={cat.label}>{value === null || value === undefined ? "—" : arabicNumber(value, 2)}</td>;
+                      };
+                      return <tr key={record.period} className="transition hover:bg-[#f7fbf9]"><td className="whitespace-nowrap px-6 py-4 font-semibold text-slate-700">{formatPeriod(record.period, granularity)}</td><td className="whitespace-nowrap px-6 py-4 font-bold text-[#0b7067]">{arabicNumber(record.precipitationMm, 2)} <span className="text-xs font-medium text-slate-400">ملم</span></td>{granularity === "monthly" && <>{idxCell(record.spi6)}{idxCell(record.spi12)}{idxCell(record.spei6)}{idxCell(record.spei12)}</>}<td className="px-6 py-4 text-slate-600">{arabicNumber(record.daysObserved)}</td><td className="px-6 py-4"><span className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">{record.source}</span></td></tr>;
                     })}
                   </tbody>
                 </table>

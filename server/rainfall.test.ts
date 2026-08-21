@@ -1,6 +1,6 @@
 import { currentRainySeasonStartYear, todayIso } from "@shared/const";
 import { describe, expect, it } from "vitest";
-import { PALESTINIAN_CITIES, aggregateRainfallData, getRainfallSeries, rainySeasonLabel, resolveRainfallRange, resolveRainySeasonRange } from "./rainfall";
+import { PALESTINIAN_CITIES, aggregateRainfallData, datasetCoverage, getRainfallSeries, rainySeasonLabel, resolveRainfallRange, resolveRainySeasonRange } from "./rainfall";
 
 describe("aggregateRainfallData", () => {
   const dailyValues = [
@@ -88,5 +88,27 @@ describe("getRainfallSeries (CHIRPS precomputed monthly)", () => {
     // غزة أقل مطرًا من رام الله؛ متوسط الموسم يجب أن يبقى ضمن مدى واقعي
     expect(series.summary.averageMm).toBeGreaterThan(50);
     expect(series.summary.averageMm).toBeLessThan(800);
+  });
+});
+
+describe("datasetCoverage", () => {
+  it("لا يشير الموسم الافتراضي إلى فترة فارغة", async () => {
+    const coverage = datasetCoverage();
+    expect(coverage.lastMonth).toMatch(/^\d{4}-\d{2}$/);
+    // الموسم الأحدث المُعلن عنه يجب أن يحتوي فعلًا على بيانات
+    const series = await getRainfallSeries({
+      cityId: "gaza",
+      granularity: "monthly",
+      seasonStartYear: coverage.latestSeasonStartYear,
+    });
+    expect(series.records.length).toBeGreaterThan(0);
+  });
+
+  it("يرفض موسمًا لا تتوفر له بيانات برسالة واضحة بدل خطأ داخلي", async () => {
+    const beyond = datasetCoverage().latestSeasonStartYear + 1;
+    if (beyond > currentRainySeasonStartYear()) return; // خارج نطاق التحقق أصلًا
+    await expect(
+      getRainfallSeries({ cityId: "gaza", granularity: "monthly", seasonStartYear: beyond })
+    ).rejects.toThrow(/آخر شهر متاح/);
   });
 });

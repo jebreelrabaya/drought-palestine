@@ -1,12 +1,13 @@
 import { FIRST_RAINY_SEASON_YEAR, currentRainySeasonStartYear } from "@shared/const";
 import { z } from "zod";
-import { PALESTINIAN_CITIES, getRainfallSeries } from "../rainfall";
+import { PALESTINIAN_CITIES, datasetCoverage, getRainfallSeries } from "../rainfall";
 import { publicProcedure, router } from "../_core/trpc";
 
 const granularitySchema = z.enum(["daily", "monthly", "annual"]);
 
 export const rainfallRouter = router({
   catalog: publicProcedure.query(() => PALESTINIAN_CITIES),
+  coverage: publicProcedure.query(() => datasetCoverage()),
   series: publicProcedure
     .input(
       z.object({

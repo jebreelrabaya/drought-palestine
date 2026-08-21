@@ -1,3 +1,4 @@
+import { TRPCError } from "@trpc/server";
 import {
   FIRST_RAINY_SEASON_YEAR,
   currentRainySeasonStartYear,
@@ -62,6 +63,24 @@ type MonthlyDataset = {
 };
 
 const MONTHLY = chirpsMonthly as MonthlyDataset;
+const MONTH_KEYS = Object.keys(MONTHLY.months).sort();
+
+/**
+ * What the precomputed dataset actually covers. CHIRPS monthly finals lag the
+ * calendar by roughly three weeks, so the newest season on the calendar is
+ * usually still empty -- the UI must not default to it.
+ */
+export function datasetCoverage() {
+  const firstMonth = MONTH_KEYS[0] ?? null;
+  const lastMonth = MONTH_KEYS.at(-1) ?? null;
+  return {
+    firstMonth,
+    lastMonth,
+    latestSeasonStartYear: lastMonth
+      ? rainySeasonStartForDate(`${lastMonth}-01`)
+      : currentRainySeasonStartYear(),
+  };
+}
 
 const FIRST_DATA_DATE = `${FIRST_RAINY_SEASON_YEAR}-01-01`;
 // Coverage runs to today rather than a pinned date, so the app keeps showing
@@ -297,7 +316,10 @@ export async function getRainfallSeries(input: {
   } else {
     const monthly = monthlyRecords(city, range.start, range.end);
     if (!monthly.length) {
-      throw new Error("لا تتوفر بيانات CHIRPS للفترة المطلوبة.");
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: `لا تتوفر بيانات بعد للفترة المطلوبة. آخر شهر متاح هو ${datasetCoverage().lastMonth ?? "غير محدد"}.`,
+      });
     }
     // Report the least-preferred source that contributed, so the label never
     // overstates the data: NASA beats v2.0 beats v3.0 in "worst wins" order.

@@ -61,10 +61,13 @@ const rainySeasonMonths = [
   { value: 1, label: "كانون الثاني" }, { value: 2, label: "شباط" }, { value: 3, label: "آذار" }, { value: 4, label: "نيسان" }, { value: 5, label: "أيار" },
 ];
 const currentSeason = currentRainySeasonStartYear();
-const rainySeasonYears = Array.from(
-  { length: currentSeason - FIRST_RAINY_SEASON_YEAR + 1 },
-  (_, index) => FIRST_RAINY_SEASON_YEAR + index
-);
+
+function seasonsUpTo(latest: number) {
+  return Array.from(
+    { length: Math.max(0, latest - FIRST_RAINY_SEASON_YEAR + 1) },
+    (_, index) => FIRST_RAINY_SEASON_YEAR + index
+  );
+}
 
 function arabicNumber(value: number, fractionDigits = 0) {
   return new Intl.NumberFormat("ar-PS", {
@@ -111,17 +114,32 @@ export default function Home() {
   const [chartType, setChartType] = useState<"line" | "bar">("line");
 
   const catalogQuery = trpc.rainfall.catalog.useQuery();
+  // CHIRPS monthly finals lag ~3 weeks, so the calendar season is usually still
+  // empty. Drive the picker from what the dataset actually holds.
+  const coverageQuery = trpc.rainfall.coverage.useQuery();
+  const latestSeason = coverageQuery.data?.latestSeasonStartYear ?? null;
+  const rainySeasonYears = useMemo(() => seasonsUpTo(latestSeason ?? currentSeason), [latestSeason]);
+  // Snap a stale or out-of-range selection onto the newest season with data.
+  const effectiveSeason =
+    seasonStartYear === "all" || latestSeason === null
+      ? seasonStartYear
+      : rainySeasonYears.includes(Number(seasonStartYear))
+        ? seasonStartYear
+        : String(latestSeason);
+
   const queryInput = useMemo(
     () => ({
       cityId,
       granularity,
-      seasonStartYear: seasonStartYear === "all" ? undefined : Number(seasonStartYear),
-      year: granularity === "daily" ? Number(month) >= 8 ? Number(seasonStartYear) : Number(seasonStartYear) + 1 : undefined,
+      seasonStartYear: effectiveSeason === "all" ? undefined : Number(effectiveSeason),
+      year: granularity === "daily" ? Number(month) >= 8 ? Number(effectiveSeason) : Number(effectiveSeason) + 1 : undefined,
       month: granularity === "daily" ? Number(month) : undefined,
     }),
-    [cityId, granularity, month, seasonStartYear]
+    [cityId, granularity, month, effectiveSeason]
   );
   const seriesQuery = trpc.rainfall.series.useQuery(queryInput, {
+    // Wait for coverage so the first request never targets an empty season.
+    enabled: coverageQuery.isSuccess,
     retry: 1,
     staleTime: 1000 * 60 * 5,
   });
@@ -137,7 +155,7 @@ export default function Home() {
   const handleGranularity = (next: Granularity) => {
     setGranularity(next);
     if (next === "annual") setSeasonStartYear("all");
-    if (next !== "annual" && seasonStartYear === "all") setSeasonStartYear(String(currentSeason));
+    if (next !== "annual" && seasonStartYear === "all") setSeasonStartYear(String(latestSeason ?? currentSeason));
   };
 
   const handleExport = () => {
@@ -189,7 +207,7 @@ export default function Home() {
             <div className="flex items-start justify-between gap-5">
               <div>
                 <p className="text-xs font-semibold text-[#eec76e]">نافذة البيانات</p>
-                <p className="mt-1 font-[Noto_Kufi_Arabic] text-lg font-semibold">{FIRST_RAINY_SEASON_YEAR} — {currentSeason}/{currentSeason + 1}</p>
+                <p className="mt-1 font-[Noto_Kufi_Arabic] text-lg font-semibold">{FIRST_RAINY_SEASON_YEAR} — {latestSeason === null ? "…" : `${latestSeason}/${latestSeason + 1}`}</p>
               </div>
               <div className="rounded-2xl bg-white/10 px-3 py-2 text-left">
                 <p className="text-[10px] text-emerald-100/75">النطاق المكاني</p>
@@ -238,7 +256,7 @@ export default function Home() {
 
             <label className="field-label">
               <span>الموسم المطري</span>
-              <div className="select-shell"><CalendarDays className="field-icon" /><select value={seasonStartYear} onChange={event => setSeasonStartYear(event.target.value)} aria-label="اختيار الموسم المطري" disabled={granularity === "annual" && seasonStartYear === "all"}>
+              <div className="select-shell"><CalendarDays className="field-icon" /><select value={effectiveSeason} onChange={event => setSeasonStartYear(event.target.value)} aria-label="اختيار الموسم المطري" disabled={granularity === "annual" && seasonStartYear === "all"}>
                 {granularity === "annual" && <option value="all">كافة المواسم</option>}
                 {rainySeasonYears.map(item => <option key={item} value={item}>{item}/{item + 1}</option>)}
               </select><ChevronDown className="select-chevron" /></div>
@@ -259,7 +277,7 @@ export default function Home() {
       </section>
 
       <section className="mx-auto max-w-7xl px-5 pb-16 pt-9 sm:px-8 lg:px-10">
-        {seriesQuery.isLoading ? (
+        {(seriesQuery.isLoading || coverageQuery.isLoading) ? (
           <div className="grid min-h-[420px] place-items-center rounded-[2rem] border border-slate-200 bg-white">
             <div className="text-center"><span className="mx-auto grid size-14 place-items-center rounded-2xl bg-[#e7f4ee] text-[#0b7067]"><Loader2 className="size-6 animate-spin" /></span><p className="mt-4 font-semibold text-slate-700">نسترجع بيانات الهطول من المصدر…</p><p className="mt-1 text-sm text-slate-500">قد تستغرق الفترة الطويلة بضع ثوانٍ فقط.</p></div>
           </div>

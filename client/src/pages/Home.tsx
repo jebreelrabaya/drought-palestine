@@ -210,6 +210,18 @@ export default function Home() {
     fullLabel: formatPeriod(record.period, granularity),
   }));
 
+  // Overlay chart is used for monthly (rainfall + SPI/SPEI/NDVI, dropdown-driven)
+  // and annual (rainfall + NDVI, always shown). Daily keeps the simple chart.
+  const isMonthly = granularity === "monthly";
+  const showRain = isMonthly ? display === "all" || display === "rainfall" : true;
+  const showSpi6 = isMonthly && (display === "all" || display === "spi6");
+  const showSpi12 = isMonthly && (display === "all" || display === "spi12");
+  const showSpei6 = isMonthly && (display === "all" || display === "spei6");
+  const showSpei12 = isMonthly && (display === "all" || display === "spei12");
+  const showNdvi = isMonthly ? display === "all" || display === "ndvi" : true;
+  const spiAxisHidden = !isMonthly || display === "rainfall" || display === "ndvi";
+  const ndviAxisShown = isMonthly ? display === "ndvi" : true;
+
   const handleGranularity = (next: Granularity) => {
     setGranularity(next);
     if (next === "annual") setSeasonStartYear("all");
@@ -392,7 +404,7 @@ export default function Home() {
             <div className="mt-5 grid gap-5 xl:grid-cols-[1.55fr_.85fr]">
               <section className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-[0_12px_35px_-30px_rgba(8,70,65,.45)]">
                 <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-                  <div><p className="text-sm font-bold text-slate-800">توزيع الهطول ومؤشرات الجفاف</p><p className="mt-1 text-xs text-slate-500">{granularity === "monthly" ? "الهطول (ملم) على المحور الأيسر، ومؤشرات SPI/SPEI على المحور الأيمن (أقل من صفر = جفاف). اختر «العرض» لإفراد مؤشر واحد." : "استكشف القيم المجمّعة بحسب الاختيار الحالي."}</p></div>
+                  <div><p className="text-sm font-bold text-slate-800">توزيع الهطول ومؤشرات الجفاف</p><p className="mt-1 text-xs text-slate-500">{granularity === "monthly" ? "الهطول (ملم) على المحور الأيسر، ومؤشرات SPI/SPEI على المحور الأيمن (أقل من صفر = جفاف). اختر «العرض» لإفراد مؤشر واحد." : granularity === "annual" ? "إجمالي الهطول لكل موسم مع متوسط مؤشر الغطاء النباتي NDVI (المحور الأيمن، من صفر إلى واحد)." : "استكشف القيم المجمّعة بحسب الاختيار الحالي."}</p></div>
                   <div className="flex w-fit items-center gap-2">
                     {granularity === "monthly" && (
                       <div className="select-shell !mt-0"><select value={display} onChange={event => setDisplay(event.target.value as DisplaySeries)} aria-label="اختيار السلسلة المعروضة" className="!py-1.5 text-xs">
@@ -407,26 +419,26 @@ export default function Home() {
                 </div>
                 <div className="h-[330px] px-1 pb-3 pt-5 sm:px-4">
                   <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260}>
-                    {granularity === "monthly" ? (
+                    {granularity !== "daily" ? (
                       <ComposedChart data={chartData} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
                         <CartesianGrid vertical={false} stroke="#e7eee9" strokeDasharray="3 5" />
                         <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: "#70817c", fontSize: 11 }} minTickGap={26} />
-                        <YAxis yAxisId="mm" hide={!(display === "all" || display === "rainfall")} axisLine={false} tickLine={false} tick={{ fill: "#70817c", fontSize: 11 }} width={42} />
-                        <YAxis yAxisId="spi" orientation="right" domain={[-3, 3]} ticks={[-2, -1, 0, 1, 2]} hide={display === "rainfall" || display === "ndvi"} axisLine={false} tickLine={false} tick={{ fill: "#9a7bb5", fontSize: 11 }} width={30} />
-                        <YAxis yAxisId="ndvi" orientation="right" domain={[0, 1]} ticks={[0, 0.25, 0.5, 0.75, 1]} hide={display !== "ndvi"} axisLine={false} tickLine={false} tick={{ fill: "#2f9e44", fontSize: 11 }} width={34} />
-                        {display !== "rainfall" && display !== "ndvi" && <ReferenceLine yAxisId="spi" y={0} stroke="#cbd5e1" strokeDasharray="2 4" />}
+                        <YAxis yAxisId="mm" hide={!showRain} axisLine={false} tickLine={false} tick={{ fill: "#70817c", fontSize: 11 }} width={42} />
+                        <YAxis yAxisId="spi" orientation="right" domain={[-3, 3]} ticks={[-2, -1, 0, 1, 2]} hide={spiAxisHidden} axisLine={false} tickLine={false} tick={{ fill: "#9a7bb5", fontSize: 11 }} width={30} />
+                        <YAxis yAxisId="ndvi" orientation="right" domain={[0, 1]} ticks={[0, 0.25, 0.5, 0.75, 1]} hide={!ndviAxisShown} axisLine={false} tickLine={false} tick={{ fill: "#2f9e44", fontSize: 11 }} width={34} />
+                        {!spiAxisHidden && <ReferenceLine yAxisId="spi" y={0} stroke="#cbd5e1" strokeDasharray="2 4" />}
                         <Tooltip cursor={{ fill: "#f1f8f5" }} contentStyle={{ borderRadius: 14, border: "1px solid #dcebe5", fontFamily: "Noto Sans Arabic", fontSize: 12 }} labelFormatter={(_, payload) => payload?.[0]?.payload?.fullLabel ?? ""} formatter={(value: number, name: string) => (name === "الهطول" ? [`${arabicNumber(value, 2)} ملم`, "الهطول"] : [arabicNumber(value, 2), name])} />
                         <Legend wrapperStyle={{ fontSize: 11, fontFamily: "Noto Sans Arabic" }} />
-                        {(display === "all" || display === "rainfall") && (chartType === "line" ? (
+                        {showRain && (chartType === "line" ? (
                           <Line yAxisId="mm" name="الهطول" type="monotone" dataKey="precipitationMm" stroke="#0b8d80" strokeWidth={3} dot={false} activeDot={{ r: 5, fill: "#e5b759", strokeWidth: 0 }} />
                         ) : (
                           <Bar yAxisId="mm" name="الهطول" dataKey="precipitationMm" fill="#0b8d80" radius={[6, 6, 0, 0]} maxBarSize={32} />
                         ))}
-                        {(display === "all" || display === "spi6") && <Line yAxisId="spi" name="SPI-6" type="monotone" dataKey="spi6" stroke="#c2760c" strokeWidth={2} dot={false} connectNulls />}
-                        {(display === "all" || display === "spi12") && <Line yAxisId="spi" name="SPI-12" type="monotone" dataKey="spi12" stroke="#7a52b3" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls />}
-                        {(display === "all" || display === "spei6") && <Line yAxisId="spi" name="SPEI-6" type="monotone" dataKey="spei6" stroke="#c0562f" strokeWidth={2} dot={false} connectNulls />}
-                        {(display === "all" || display === "spei12") && <Line yAxisId="spi" name="SPEI-12" type="monotone" dataKey="spei12" stroke="#2777b9" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls />}
-                        {(display === "all" || display === "ndvi") && <Line yAxisId="ndvi" name="NDVI" type="monotone" dataKey="ndvi" stroke="#2f9e44" strokeWidth={2} dot={false} connectNulls />}
+                        {showSpi6 && <Line yAxisId="spi" name="SPI-6" type="monotone" dataKey="spi6" stroke="#c2760c" strokeWidth={2} dot={false} connectNulls />}
+                        {showSpi12 && <Line yAxisId="spi" name="SPI-12" type="monotone" dataKey="spi12" stroke="#7a52b3" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls />}
+                        {showSpei6 && <Line yAxisId="spi" name="SPEI-6" type="monotone" dataKey="spei6" stroke="#c0562f" strokeWidth={2} dot={false} connectNulls />}
+                        {showSpei12 && <Line yAxisId="spi" name="SPEI-12" type="monotone" dataKey="spei12" stroke="#2777b9" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls />}
+                        {showNdvi && <Line yAxisId="ndvi" name="NDVI" type="monotone" dataKey="ndvi" stroke="#2f9e44" strokeWidth={2} dot={false} connectNulls />}
                       </ComposedChart>
                     ) : chartType === "line" ? (
                       <RechartsLineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>

@@ -406,14 +406,19 @@ export async function getRainfallSeries(input: {
         if (low !== null && low !== undefined) seasonLowTempC = seasonLowTempC === null ? low : Math.min(seasonLowTempC, low);
       }
     } else {
-      const seasons = new Map<string, { total: number; days: number; version: DataVersion }>();
+      const seasons = new Map<string, { total: number; days: number; version: DataVersion; ndviSum: number; ndviCount: number }>();
       for (const record of monthly) {
         const label = rainySeasonLabel(rainySeasonStartForDate(`${record.period}-01`));
-        const current = seasons.get(label) ?? { total: 0, days: 0, version: "3.0" as DataVersion };
+        const current = seasons.get(label) ?? { total: 0, days: 0, version: "3.0" as DataVersion, ndviSum: 0, ndviCount: 0 };
         current.total += record.precipitationMm;
         current.days += monthDays(Number(record.period.slice(0, 4)), Number(record.period.slice(5, 7)));
         if (record.version === "2.0" && current.version === "3.0") current.version = "2.0";
         if (record.version === "nasa") current.version = "nasa";
+        const ndvi = NDVI.months[record.period]?.[city.id];
+        if (ndvi !== null && ndvi !== undefined) {
+          current.ndviSum += ndvi;
+          current.ndviCount += 1;
+        }
         seasons.set(label, current);
       }
       records = Array.from(seasons.entries())
@@ -423,6 +428,7 @@ export async function getRainfallSeries(input: {
           precipitationMm: round(season.total),
           daysObserved: season.days,
           source: sourceLabel(season.version),
+          ndvi: season.ndviCount ? Math.round((season.ndviSum / season.ndviCount) * 1000) / 1000 : null,
         }));
     }
   }

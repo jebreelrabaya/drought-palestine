@@ -15,17 +15,17 @@ describe("exportRainfallToXlsx", () => {
     exportRainfallToXlsx({
       city: { name: "غزة", latitude: 31.5017, longitude: 34.4668 },
       granularity: "monthly",
-      records: [{ period: "2025-01", precipitationMm: 32.4, daysObserved: 31, source: "NASA POWER" }],
+      records: [{ period: "2025-01", precipitationMm: 32.4, daysObserved: 31, source: "CHIRPS v3.0" }],
       metadata: {
-        source: "NASA POWER Daily API",
-        parameter: "PRECTOTCORR",
+        source: "CHIRPS v3.0 Monthly",
+        parameter: "precipitation",
         unit: "mm",
         requestedStart: "2025-01-01",
         requestedEnd: "2025-12-31",
         rainySeasonLabel: "2025/2026",
         availableThrough: "2025-12-31",
-        aggregation: "مجموع القيم اليومية لكل شهر",
-        sourceUrl: "https://power.larc.nasa.gov/docs/services/api/temporal/daily/",
+        aggregation: "مجاميع CHIRPS الشهرية لكل شهر",
+        sourceUrl: "https://www.chc.ucsb.edu/data/chirps",
       },
     });
 
@@ -35,7 +35,7 @@ describe("exportRainfallToXlsx", () => {
     expect(call?.[1]).toBe("أمطار_غزة_شهري_موسم_2025-2026.xlsx");
     expect(workbook.SheetNames).toEqual(["بيانات الأمطار", "المصدر والمنهجية"]);
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets["بيانات الأمطار"], { header: 1 });
-    expect(rows[1]).toEqual(["2025-01", 32.4, 31, "NASA POWER"]);
+    expect(rows[1]).toEqual(["2025-01", 32.4, 31, "CHIRPS v3.0"]);
     writeFile.mockReset();
   });
 });

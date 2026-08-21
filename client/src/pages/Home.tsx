@@ -174,7 +174,7 @@ export default function Home() {
               منصة عربية تتيح استعراض وتحميل الهطول اليومي والشهري والموسمي لمدن فلسطين وفق الموسم المطري الفلسطيني، من آب حتى أيار، ضمن التغطية المتاحة حتى آب 2026.
             </p>
             <div className="mt-8 flex flex-wrap gap-x-7 gap-y-3 text-sm text-emerald-100/90">
-              <span className="inline-flex items-center gap-2"><Satellite className="size-4 text-[#eec76e]" />NASA POWER Daily API</span>
+              <span className="inline-flex items-center gap-2"><Satellite className="size-4 text-[#eec76e]" />CHIRPS v3.0 (CHC/UCSB)</span>
               <span className="inline-flex items-center gap-2"><FileSpreadsheet className="size-4 text-[#eec76e]" />تنزيل Excel فوري</span>
               <span className="inline-flex items-center gap-2"><MapPin className="size-4 text-[#eec76e]" />مدن فلسطينية متعددة</span>
             </div>
@@ -317,8 +317,8 @@ export default function Home() {
                 <span className="grid size-11 place-items-center rounded-2xl bg-white text-[#0b7067] shadow-sm"><Satellite className="size-5" /></span>
                 <h3 className="mt-5 font-[Noto_Kufi_Arabic] text-base font-bold leading-8 text-[#10443e]">قراءة شفافة للبيانات</h3>
                 <dl className="mt-5 space-y-3 text-sm">
-                  <div className="flex justify-between gap-4 border-b border-[#cfe3da] pb-3"><dt className="text-slate-500">المصدر</dt><dd className="font-semibold text-[#10443e]">NASA POWER</dd></div>
-                  <div className="flex justify-between gap-4 border-b border-[#cfe3da] pb-3"><dt className="text-slate-500">المعلمة</dt><dd className="font-semibold text-[#10443e]">PRECTOTCORR</dd></div>
+                  <div className="flex justify-between gap-4 border-b border-[#cfe3da] pb-3"><dt className="text-slate-500">المصدر</dt><dd className="font-semibold text-[#10443e]">{series.metadata.source}</dd></div>
+                  <div className="flex justify-between gap-4 border-b border-[#cfe3da] pb-3"><dt className="text-slate-500">المعلمة</dt><dd className="font-semibold text-[#10443e]">الهطول (ملم)</dd></div>
                   <div className="flex justify-between gap-4 border-b border-[#cfe3da] pb-3"><dt className="text-slate-500">آخر يوم متاح</dt><dd className="font-semibold text-[#10443e]">{series.metadata.availableThrough ?? "—"}</dd></div>
                   <div className="flex justify-between gap-4 border-b border-[#cfe3da] pb-3"><dt className="text-slate-500">الموسم</dt><dd className="font-semibold text-[#10443e]">{series.metadata.rainySeasonLabel}</dd></div>
                   <div className="flex justify-between gap-4"><dt className="text-slate-500">منهجية العرض</dt><dd className="max-w-[160px] text-left text-xs font-semibold leading-5 text-[#10443e]">{series.metadata.aggregation}</dd></div>
@@ -345,11 +345,11 @@ export default function Home() {
       <section id="المصدر" className="border-y border-[#dce9e2] bg-[#eaf4ef]">
         <div className="mx-auto grid max-w-7xl gap-8 px-5 py-14 sm:px-8 lg:grid-cols-[.8fr_1.2fr] lg:px-10">
           <div><p className="text-xs font-bold tracking-wide text-[#0b7067]">المصدر والمنهجية</p><h2 className="mt-3 font-[Noto_Kufi_Arabic] text-xl font-bold leading-10 text-[#10443e]">بيانات واضحة، وإسناد لا يترك مجالًا للالتباس.</h2></div>
-          <div className="space-y-4 text-sm leading-8 text-slate-600"><p>يعرض هذا الإصدار قيَم الهطول اليومية <strong className="font-semibold text-slate-800">PRECTOTCORR</strong> من واجهة <strong className="font-semibold text-slate-800">NASA POWER Daily API</strong> عند إحداثيات مركز المدينة المختارة، ثم يجمعها حسابيًا لإنشاء الإجماليات الشهرية والموسمية وفق الموسم المطري الفلسطيني من آب حتى أيار. لا تُعرض القيمة الناقصة أو غير الصالحة من المصدر.</p><p>تُذكر <a className="font-semibold text-[#0b7067] underline decoration-[#7fc4ad] underline-offset-4" href="https://www.chc.ucsb.edu/data/chirps" target="_blank" rel="noreferrer">CHIRPS</a> كمرجع علمي مكمل لتقديرات الأمطار المعتمدة على الأقمار الصناعية والقياسات المحطية. لن تُنسب أي قراءة في هذا الإصدار إلى CHIRPS إلا إذا جرى استرجاعها منه مباشرة في إصدار لاحق.</p></div>
+          <div className="space-y-4 text-sm leading-8 text-slate-600"><p>يعتمد هذا الإصدار على تقديرات الهطول من <strong className="font-semibold text-slate-800">CHIRPS v3.0</strong> الصادرة عن مركز مخاطر المناخ في جامعة كاليفورنيا – سانتا باربرا، وتُقرأ عند إحداثيات مركز المدينة المختارة بدقة 0.05 درجة. تُؤخذ المجاميع الشهرية مباشرة من مرئيات CHIRPS الشهرية، ثم تُجمع لإنشاء إجماليات الموسم المطري الفلسطيني من آب حتى أيار. أما القيَم اليومية فتُستخرج من سلسلة CHIRPS اليومية، حيث يوزَّع مجموع البنتاد على أيامه اعتمادًا على بيانات ERA5. لا تُعرض القيمة الناقصة أو غير الصالحة من المصدر.</p><p>جميع القراءات المعروضة هنا مستمدة من <a className="font-semibold text-[#0b7067] underline decoration-[#7fc4ad] underline-offset-4" href="https://www.chc.ucsb.edu/data/chirps" target="_blank" rel="noreferrer">CHIRPS</a> حصريًا. وإذا تعذّر الوصول إلى الإصدار الثالث لأي فترة، يعود التطبيق تلقائيًا إلى <strong className="font-semibold text-slate-800">CHIRPS v2.0</strong>، ويُصرَّح بذلك في حقل المصدر وفي ملف التصدير.</p></div>
         </div>
       </section>
 
-      <footer className="bg-[#083834] px-5 py-8 text-center text-sm text-emerald-100/75 sm:px-8"><p>مستكشف أمطار فلسطين — منصة استكشافية لبيانات الأمطار التاريخية.</p><p className="mt-2 text-xs">NASA POWER و CHIRPS هما مصدران مرجعيان مذكوران بوضوح في مواضع عرض البيانات.</p></footer>
+      <footer className="bg-[#083834] px-5 py-8 text-center text-sm text-emerald-100/75 sm:px-8"><p>مستكشف أمطار فلسطين — منصة استكشافية لبيانات الأمطار التاريخية.</p><p className="mt-2 text-xs">CHIRPS v3.0 (مع تراجع تلقائي إلى v2.0) هو المصدر الوحيد لبيانات الهطول في هذه المنصة.</p></footer>
     </main>
   );
 }

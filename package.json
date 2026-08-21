@@ -11,7 +11,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
-    "build:netlify": "vite build"
+    "build:netlify": "vite build",
+    "build:chirps": "tsx scripts/build-chirps.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",
@@ -58,6 +59,7 @@
     "embla-carousel-react": "^8.6.0",
     "express": "^4.21.2",
     "framer-motion": "^12.23.22",
+    "geotiff": "^3.0.5",
     "input-otp": "^1.4.2",
     "jose": "6.1.0",
     "lucide-react": "^0.453.0",

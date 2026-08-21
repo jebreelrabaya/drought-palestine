@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PALESTINIAN_CITIES, aggregateRainfallData, rainySeasonLabel, resolveRainfallRange, resolveRainySeasonRange } from "./rainfall";
+import { PALESTINIAN_CITIES, aggregateRainfallData, getRainfallSeries, rainySeasonLabel, resolveRainfallRange, resolveRainySeasonRange } from "./rainfall";
 
 describe("aggregateRainfallData", () => {
   const dailyValues = [
@@ -11,16 +11,16 @@ describe("aggregateRainfallData", () => {
 
   it("يجمع القيم اليومية في مجاميع شهرية مع عدد الأيام المرصودة", () => {
     expect(aggregateRainfallData(dailyValues, "monthly")).toEqual([
-      { period: "2025-08", precipitationMm: 3.75, daysObserved: 2, source: "NASA POWER" },
-      { period: "2026-02", precipitationMm: 4.75, daysObserved: 1, source: "NASA POWER" },
-      { period: "2026-08", precipitationMm: 3, daysObserved: 1, source: "NASA POWER" },
+      { period: "2025-08", precipitationMm: 3.75, daysObserved: 2, source: "CHIRPS v3.0" },
+      { period: "2026-02", precipitationMm: 4.75, daysObserved: 1, source: "CHIRPS v3.0" },
+      { period: "2026-08", precipitationMm: 3, daysObserved: 1, source: "CHIRPS v3.0" },
     ]);
   });
 
   it("يجمع القيم اليومية حسب موسم آب إلى أيار ويحافظ على الترتيب الزمني", () => {
     expect(aggregateRainfallData(dailyValues, "annual")).toEqual([
-      { period: "2025/2026", precipitationMm: 8.5, daysObserved: 3, source: "NASA POWER" },
-      { period: "2026/2027", precipitationMm: 3, daysObserved: 1, source: "NASA POWER" },
+      { period: "2025/2026", precipitationMm: 8.5, daysObserved: 3, source: "CHIRPS v3.0" },
+      { period: "2026/2027", precipitationMm: 3, daysObserved: 1, source: "CHIRPS v3.0" },
     ]);
   });
 
@@ -34,5 +34,43 @@ describe("aggregateRainfallData", () => {
   it("يوفر المدن الفلسطينية المطلوبة ضمن دليل الاختيار", () => {
     const cityNames = PALESTINIAN_CITIES.map(city => city.name);
     expect(cityNames).toEqual(expect.arrayContaining(["غزة", "رام الله", "نابلس", "الخليل", "جنين", "طولكرم", "أريحا", "بيت لحم", "القدس"]));
+  });
+});
+
+describe("getRainfallSeries (CHIRPS precomputed monthly)", () => {
+  it("يبني موسمًا شهريًا من مجاميع CHIRPS المحسوبة مسبقًا دون أي طلب شبكي", async () => {
+    const series = await getRainfallSeries({
+      cityId: "ramallah",
+      granularity: "monthly",
+      year: 2000,
+      seasonStartYear: 2000,
+    });
+
+    expect(series.city.id).toBe("ramallah");
+    expect(series.metadata.sourceUrl).toBe("https://www.chc.ucsb.edu/data/chirps");
+    expect(series.metadata.source).toMatch(/^CHIRPS v[23]\.0 Monthly$/);
+    // آب 2000 حتى أيار 2001
+    expect(series.records.length).toBeGreaterThan(0);
+    expect(series.records[0].period >= "2000-08").toBe(true);
+    expect(series.records.at(-1)!.period <= "2001-05").toBe(true);
+    for (const record of series.records) {
+      expect(record.source).toMatch(/^CHIRPS v[23]\.0$/);
+      expect(record.precipitationMm).toBeGreaterThanOrEqual(0);
+    }
+    // رام الله مدينة جبلية ماطرة: مجموع الموسم يجب أن يكون معقولًا
+    expect(series.summary.totalMm).toBeGreaterThan(100);
+    expect(series.summary.totalMm).toBeLessThan(1500);
+  });
+
+  it("يجمع المواسم في العرض الموسمي ويسمّي كل موسم بصيغة آب–أيار", async () => {
+    const series = await getRainfallSeries({ cityId: "gaza", granularity: "annual" });
+
+    expect(series.records.length).toBeGreaterThan(1);
+    for (const record of series.records) {
+      expect(record.period).toMatch(/^\d{4}\/\d{4}$/);
+    }
+    // غزة أقل مطرًا من رام الله؛ متوسط الموسم يجب أن يبقى ضمن مدى واقعي
+    expect(series.summary.averageMm).toBeGreaterThan(50);
+    expect(series.summary.averageMm).toBeLessThan(800);
   });
 });

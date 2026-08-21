@@ -1,17 +1,19 @@
+import chirpsMonthly from "./data/chirps-monthly.json" with { type: "json" };
+import { CHIRPS_SOURCE_URL, dailyUrl, readPointsWithFallback, type ChirpsVersion } from "./chirps";
+import { PALESTINIAN_CITIES, type PalestinianCity } from "./cities";
+
+export { PALESTINIAN_CITIES };
+export type { PalestinianCity };
+
 export type RainfallGranularity = "daily" | "monthly" | "annual";
 
-export type PalestinianCity = {
-  id: string;
-  name: string;
-  latitude: number;
-  longitude: number;
-};
+export type ChirpsSourceLabel = "CHIRPS v3.0" | "CHIRPS v2.0";
 
 export type RainfallRecord = {
   period: string;
   precipitationMm: number;
   daysObserved: number;
-  source: "NASA POWER";
+  source: ChirpsSourceLabel;
 };
 
 export type RainfallSeries = {
@@ -26,8 +28,8 @@ export type RainfallSeries = {
     recordCount: number;
   };
   metadata: {
-    source: "NASA POWER Daily API";
-    parameter: "PRECTOTCORR";
+    source: string;
+    parameter: "precipitation";
     unit: "mm";
     requestedStart: string;
     requestedEnd: string;
@@ -38,52 +40,36 @@ export type RainfallSeries = {
   };
 };
 
-type DailyObservation = {
-  date: string;
-  precipitationMm: number;
+type MonthlyEntry = { version: ChirpsVersion; values: Record<string, number | null> };
+type MonthlyDataset = {
+  generatedAt: string;
+  product: string;
+  cities: string[];
+  months: Record<string, MonthlyEntry>;
 };
 
-type PowerResponse = {
-  properties?: {
-    parameter?: {
-      PRECTOTCORR?: Record<string, number>;
-    };
-  };
-};
+const MONTHLY = chirpsMonthly as MonthlyDataset;
 
-const POWER_DAILY_URL = "https://power.larc.nasa.gov/api/temporal/daily/point";
-const POWER_SOURCE_URL = "https://power.larc.nasa.gov/docs/services/api/temporal/daily/";
 const FIRST_DATA_DATE = "2000-01-01";
 // This application intentionally stops within the requested August 2026 window.
 const MAX_REQUEST_DATE = "2026-08-20";
 const CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+// CHC answers 403 when hit hard, so keep the per-request fan-out modest.
+const DAILY_CONCURRENCY = 8;
 
-const dailyCache = new Map<string, { expiresAt: number; data: DailyObservation[] }>();
+type DailyObservation = { date: string; precipitationMm: number };
 
-export const PALESTINIAN_CITIES: PalestinianCity[] = [
-  { id: "gaza", name: "غزة", latitude: 31.5017, longitude: 34.4668 },
-  { id: "ramallah", name: "رام الله", latitude: 31.9038, longitude: 35.2034 },
-  { id: "nablus", name: "نابلس", latitude: 32.2211, longitude: 35.2544 },
-  { id: "hebron", name: "الخليل", latitude: 31.5326, longitude: 35.0998 },
-  { id: "jenin", name: "جنين", latitude: 32.4595, longitude: 35.3009 },
-  { id: "tulkarm", name: "طولكرم", latitude: 32.3104, longitude: 35.0286 },
-  { id: "jericho", name: "أريحا", latitude: 31.8572, longitude: 35.4444 },
-  { id: "bethlehem", name: "بيت لحم", latitude: 31.7054, longitude: 35.2024 },
-  { id: "jerusalem", name: "القدس", latitude: 31.7683, longitude: 35.2137 },
-  { id: "rafah", name: "رفح", latitude: 31.2969, longitude: 34.2436 },
-  { id: "khan-younis", name: "خان يونس", latitude: 31.3460, longitude: 34.3063 },
-  { id: "deir-al-balah", name: "دير البلح", latitude: 31.4181, longitude: 34.3493 },
-  { id: "qalqilya", name: "قلقيلية", latitude: 32.1897, longitude: 34.9706 },
-  { id: "salfit", name: "سلفيت", latitude: 32.0837, longitude: 35.1808 },
-  { id: "tubas", name: "طوباس", latitude: 32.3209, longitude: 35.3699 },
-];
+const dailyCache = new Map<
+  string,
+  { expiresAt: number; version: ChirpsVersion; data: DailyObservation[] }
+>();
+
+export function sourceLabel(version: ChirpsVersion): ChirpsSourceLabel {
+  return version === "3.0" ? "CHIRPS v3.0" : "CHIRPS v2.0";
+}
 
 function clampEndDate(date: string) {
   return date > MAX_REQUEST_DATE ? MAX_REQUEST_DATE : date;
-}
-
-function toPowerDate(date: string) {
-  return date.replaceAll("-", "");
 }
 
 function round(value: number) {
@@ -137,7 +123,8 @@ export function resolveRainfallRange(
 
 export function aggregateRainfallData(
   observations: DailyObservation[],
-  granularity: RainfallGranularity
+  granularity: RainfallGranularity,
+  source: ChirpsSourceLabel = "CHIRPS v3.0"
 ): RainfallRecord[] {
   const groups = new Map<string, { total: number; daysObserved: number }>();
 
@@ -160,74 +147,94 @@ export function aggregateRainfallData(
       period,
       precipitationMm: round(group.total),
       daysObserved: group.daysObserved,
-      source: "NASA POWER" as const,
+      source,
     }));
 }
 
+function eachDate(start: string, end: string) {
+  const dates: string[] = [];
+  const cursor = new Date(`${start}T00:00:00Z`);
+  const last = new Date(`${end}T00:00:00Z`);
+  while (cursor <= last) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+/**
+ * Daily values are not precomputed, so they come straight from CHIRPS. One
+ * raster per day means this only ever covers a single month at a time.
+ */
 async function fetchDailyObservations(
   city: PalestinianCity,
   start: string,
   end: string
-): Promise<DailyObservation[]> {
+): Promise<{ observations: DailyObservation[]; version: ChirpsVersion }> {
   const cacheKey = `${city.id}:${start}:${end}`;
   const cached = dailyCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
-    return cached.data;
+    return { observations: cached.data, version: cached.version };
   }
 
-  const query = new URLSearchParams({
-    parameters: "PRECTOTCORR",
-    community: "RE",
-    longitude: city.longitude.toString(),
-    latitude: city.latitude.toString(),
-    start: toPowerDate(start),
-    end: toPowerDate(end),
-    format: "JSON",
-    "time-standard": "UTC",
-  });
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 28_000);
+  const point = { id: city.id, longitude: city.longitude, latitude: city.latitude };
+  const dates = eachDate(start, end);
+  const observations: DailyObservation[] = [];
+  let version: ChirpsVersion = "3.0";
+  let failures = 0;
 
-  try {
-    const response = await fetch(`${POWER_DAILY_URL}?${query.toString()}`, {
-      signal: controller.signal,
-      headers: { Accept: "application/json" },
-    });
-    if (!response.ok) {
-      throw new Error(`تعذر الوصول إلى NASA POWER (رمز الاستجابة ${response.status}).`);
+  for (let index = 0; index < dates.length; index += DAILY_CONCURRENCY) {
+    const batch = dates.slice(index, index + DAILY_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async date => {
+        try {
+          const { version: used, samples } = await readPointsWithFallback(
+            candidate => dailyUrl(candidate, date),
+            [point]
+          );
+          return { date, used, value: samples[0]?.precipitationMm ?? null };
+        } catch {
+          return { date, used: null, value: null };
+        }
+      })
+    );
+    for (const result of results) {
+      if (result.value === null || result.used === null) {
+        failures++;
+        continue;
+      }
+      if (result.used === "2.0") version = "2.0";
+      observations.push({ date: result.date, precipitationMm: result.value });
     }
-
-    const payload = (await response.json()) as PowerResponse;
-    const values = payload.properties?.parameter?.PRECTOTCORR;
-    if (!values) {
-      throw new Error("لم يعُد مصدر البيانات بقيم هطول صالحة للفترة المطلوبة.");
-    }
-
-    const observations = Object.entries(values)
-      .map(([key, value]) => ({
-        date: `${key.slice(0, 4)}-${key.slice(4, 6)}-${key.slice(6, 8)}`,
-        precipitationMm: Number(value),
-      }))
-      .filter(
-        observation =>
-          observation.date >= start &&
-          observation.date <= end &&
-          Number.isFinite(observation.precipitationMm) &&
-          observation.precipitationMm >= 0 &&
-          observation.precipitationMm < 900
-      )
-      .sort((left, right) => left.date.localeCompare(right.date));
-
-    dailyCache.set(cacheKey, { data: observations, expiresAt: Date.now() + CACHE_TTL_MS });
-    return observations;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("انتهت مهلة الاتصال بمصدر NASA POWER؛ يُرجى المحاولة مرة أخرى.");
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  if (!observations.length) {
+    throw new Error(
+      failures
+        ? "تعذر الوصول إلى بيانات CHIRPS اليومية للفترة المطلوبة؛ يُرجى المحاولة مرة أخرى."
+        : "لم يعُد مصدر البيانات بقيم هطول صالحة للفترة المطلوبة."
+    );
+  }
+
+  observations.sort((left, right) => left.date.localeCompare(right.date));
+  dailyCache.set(cacheKey, { data: observations, version, expiresAt: Date.now() + CACHE_TTL_MS });
+  return { observations, version };
+}
+
+/** Monthly and annual views read the precomputed CHIRPS monthly totals. */
+function monthlyRecords(city: PalestinianCity, start: string, end: string) {
+  const startKey = start.slice(0, 7);
+  const endKey = end.slice(0, 7);
+  const records: { period: string; precipitationMm: number; version: ChirpsVersion }[] = [];
+
+  for (const [period, entry] of Object.entries(MONTHLY.months)) {
+    if (period < startKey || period > endKey) continue;
+    const value = entry.values[city.id];
+    if (value === null || value === undefined) continue;
+    records.push({ period, precipitationMm: value, version: entry.version });
+  }
+
+  return records.sort((left, right) => left.period.localeCompare(right.period));
 }
 
 export async function getRainfallSeries(input: {
@@ -250,10 +257,55 @@ export async function getRainfallSeries(input: {
         ? { start: "2000-08-01", end: "2026-05-31" }
         : resolveRainySeasonRange(input.seasonStartYear ?? 2025);
   const selectedSeasonStartYear = input.seasonStartYear ?? rainySeasonStartForDate(range.start);
-  const observations = await fetchDailyObservations(city, range.start, range.end);
-  const records = aggregateRainfallData(observations, input.granularity);
+
+  let records: RainfallRecord[];
+  let version: ChirpsVersion = "3.0";
+  let availableThrough: string | null = null;
+
+  if (input.granularity === "daily") {
+    const daily = await fetchDailyObservations(city, range.start, range.end);
+    version = daily.version;
+    records = aggregateRainfallData(daily.observations, "daily", sourceLabel(version));
+    availableThrough = daily.observations.at(-1)?.date ?? null;
+  } else {
+    const monthly = monthlyRecords(city, range.start, range.end);
+    if (!monthly.length) {
+      throw new Error("لا تتوفر بيانات CHIRPS للفترة المطلوبة.");
+    }
+    if (monthly.some(record => record.version === "2.0")) version = "2.0";
+    availableThrough = monthly.at(-1)?.period ?? null;
+
+    if (input.granularity === "monthly") {
+      records = monthly.map(record => ({
+        period: record.period,
+        precipitationMm: round(record.precipitationMm),
+        daysObserved: monthDays(Number(record.period.slice(0, 4)), Number(record.period.slice(5, 7))),
+        source: sourceLabel(record.version),
+      }));
+    } else {
+      const seasons = new Map<string, { total: number; days: number; version: ChirpsVersion }>();
+      for (const record of monthly) {
+        const label = rainySeasonLabel(rainySeasonStartForDate(`${record.period}-01`));
+        const current = seasons.get(label) ?? { total: 0, days: 0, version: "3.0" as ChirpsVersion };
+        current.total += record.precipitationMm;
+        current.days += monthDays(Number(record.period.slice(0, 4)), Number(record.period.slice(5, 7)));
+        if (record.version === "2.0") current.version = "2.0";
+        seasons.set(label, current);
+      }
+      records = Array.from(seasons.entries())
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([period, season]) => ({
+          period,
+          precipitationMm: round(season.total),
+          daysObserved: season.days,
+          source: sourceLabel(season.version),
+        }));
+    }
+  }
+
   const peak = records.reduce<RainfallRecord | null>(
-    (currentPeak, record) => (!currentPeak || record.precipitationMm > currentPeak.precipitationMm ? record : currentPeak),
+    (currentPeak, record) =>
+      !currentPeak || record.precipitationMm > currentPeak.precipitationMm ? record : currentPeak,
     null
   );
   const totalMm = round(records.reduce((sum, record) => sum + record.precipitationMm, 0));
@@ -270,20 +322,23 @@ export async function getRainfallSeries(input: {
       recordCount: records.length,
     },
     metadata: {
-      source: "NASA POWER Daily API",
-      parameter: "PRECTOTCORR",
+      source:
+        input.granularity === "daily"
+          ? `${sourceLabel(version)} Daily`
+          : `${sourceLabel(version)} Monthly`,
+      parameter: "precipitation",
       unit: "mm",
       requestedStart: range.start,
       requestedEnd: range.end,
       rainySeasonLabel: allSeasons ? "2000/2001 حتى 2025/2026" : rainySeasonLabel(selectedSeasonStartYear),
-      availableThrough: observations.at(-1)?.date ?? null,
+      availableThrough,
       aggregation:
         input.granularity === "daily"
-          ? "قيم يومية كما يعيدها المصدر"
+          ? "قيم يومية من CHIRPS (تُوزَّع مجاميع البنتاد على الأيام عبر ERA5)"
           : input.granularity === "monthly"
-            ? "مجموع القيم اليومية لكل شهر من الموسم المطري (آب–أيار)"
-            : "مجموع القيم اليومية لكل موسم مطري (آب–أيار)",
-      sourceUrl: POWER_SOURCE_URL,
+            ? "مجاميع CHIRPS الشهرية لكل شهر من الموسم المطري (آب–أيار)"
+            : "مجموع مجاميع CHIRPS الشهرية لكل موسم مطري (آب–أيار)",
+      sourceUrl: CHIRPS_SOURCE_URL,
     },
   };
 }

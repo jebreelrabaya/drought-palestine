@@ -15,9 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No version here: package.json's "packageManager" field pins pnpm, and
+      # passing both makes pnpm/action-setup abort with a version-mismatch error.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:

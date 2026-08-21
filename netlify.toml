@@ -10,8 +10,9 @@
 
 [functions]
   node_bundler = "esbuild"
-  # Native/optional bits that esbuild should not try to inline.
-  external_node_modules = ["mysql2"]
+  # Everything is inlined. Do NOT mark mysql2 (or anything else) external:
+  # under pnpm's symlinked store Netlify can fail to copy externals into the
+  # function zip, and the function then 503s on load with MODULE_NOT_FOUND.
 
 # API traffic goes to the Express function; everything else is the SPA.
 [[redirects]]

@@ -1,0 +1,32 @@
+[build]
+  command = "pnpm run build:netlify"
+  publish = "dist/public"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "22"
+  # Vite 7 and friends live in devDependencies; Netlify prunes them without this.
+  NPM_FLAGS = "--production=false"
+
+[functions]
+  node_bundler = "esbuild"
+  # Native/optional bits that esbuild should not try to inline.
+  external_node_modules = ["mysql2"]
+
+# API traffic goes to the Express function; everything else is the SPA.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/manus-storage/*"
+  to = "/.netlify/functions/api"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

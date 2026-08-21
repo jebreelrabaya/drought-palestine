@@ -1,0 +1,41 @@
+import * as XLSX from "xlsx";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("xlsx", async importOriginal => {
+  const actual = await importOriginal<typeof import("xlsx")>();
+  return { ...actual, writeFile: vi.fn() };
+});
+
+import { exportRainfallToXlsx } from "../client/src/lib/exportRainfall";
+
+describe("exportRainfallToXlsx", () => {
+  it("ينشئ مصنفًا عربيًا يضم البيانات الظاهرة وإسناد المصدر", () => {
+    const writeFile = vi.mocked(XLSX.writeFile);
+
+    exportRainfallToXlsx({
+      city: { name: "غزة", latitude: 31.5017, longitude: 34.4668 },
+      granularity: "monthly",
+      records: [{ period: "2025-01", precipitationMm: 32.4, daysObserved: 31, source: "NASA POWER" }],
+      metadata: {
+        source: "NASA POWER Daily API",
+        parameter: "PRECTOTCORR",
+        unit: "mm",
+        requestedStart: "2025-01-01",
+        requestedEnd: "2025-12-31",
+        rainySeasonLabel: "2025/2026",
+        availableThrough: "2025-12-31",
+        aggregation: "مجموع القيم اليومية لكل شهر",
+        sourceUrl: "https://power.larc.nasa.gov/docs/services/api/temporal/daily/",
+      },
+    });
+
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    const call = writeFile.mock.calls[0];
+    const workbook = call?.[0] as XLSX.WorkBook;
+    expect(call?.[1]).toBe("أمطار_غزة_شهري_موسم_2025-2026.xlsx");
+    expect(workbook.SheetNames).toEqual(["بيانات الأمطار", "المصدر والمنهجية"]);
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets["بيانات الأمطار"], { header: 1 });
+    expect(rows[1]).toEqual(["2025-01", 32.4, 31, "NASA POWER"]);
+    writeFile.mockReset();
+  });
+});

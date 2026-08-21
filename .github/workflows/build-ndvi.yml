@@ -10,6 +10,7 @@ on:
 jobs:
   build-ndvi:
     runs-on: ubuntu-latest
+    timeout-minutes: 50 # hard cap; AppEEARS is async but should never take this long
     permissions:
       contents: write
     steps:

@@ -30,6 +30,18 @@ const OUT = path.resolve(import.meta.dirname, "..", "server", "data", "ndvi-mont
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Node fetch has no default timeout, so a stalled AppEEARS connection would hang
+// the whole job indefinitely. Bound every request.
+async function fetchT(url: string, init: RequestInit = {}, timeoutMs = 60_000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function authToken(): Promise<string> {
   if (process.env.EARTHDATA_TOKEN) return process.env.EARTHDATA_TOKEN;
   const user = process.env.EARTHDATA_USERNAME;
@@ -38,7 +50,7 @@ async function authToken(): Promise<string> {
     throw new Error("Set EARTHDATA_TOKEN, or EARTHDATA_USERNAME + EARTHDATA_PASSWORD.");
   }
   const basic = Buffer.from(`${user}:${pass}`).toString("base64");
-  const response = await fetch(`${API}/login`, {
+  const response = await fetchT(`${API}/login`, {
     method: "POST",
     headers: { Authorization: `Basic ${basic}` },
   });
@@ -66,7 +78,7 @@ async function submitTask(token: string, endDate: string): Promise<string> {
       })),
     },
   };
-  const response = await fetch(`${API}/task`, {
+  const response = await fetchT(`${API}/task`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -77,30 +89,39 @@ async function submitTask(token: string, endDate: string): Promise<string> {
   return task_id;
 }
 
-async function waitForTask(token: string, taskId: string, timeoutMs = 45 * 60_000) {
-  const deadline = Date.now() + timeoutMs;
+async function waitForTask(token: string, taskId: string, timeoutMs = 40 * 60_000) {
+  const start = Date.now();
+  const deadline = start + timeoutMs;
+  let last = "";
   while (Date.now() < deadline) {
-    const response = await fetch(`${API}/task/${taskId}`, { headers: { Authorization: `Bearer ${token}` } });
-    const status = (await response.json()) as { status?: string };
-    process.stdout.write(`\r  task ${taskId}: ${status.status ?? "?"}          `);
-    if (status.status === "done") return;
-    if (status.status === "error") throw new Error(`AppEEARS task errored`);
+    try {
+      const response = await fetchT(`${API}/task/${taskId}`, { headers: { Authorization: `Bearer ${token}` } }, 30_000);
+      const status = (await response.json()) as { status?: string };
+      last = status.status ?? "?";
+      process.stdout.write(`\r  task ${taskId}: ${last} (${Math.round((Date.now() - start) / 60000)}m)          `);
+      if (last === "done") return;
+      if (last === "error") throw new Error("AppEEARS task errored");
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("errored")) throw error;
+      // A stalled/aborted poll must not kill the job; keep trying until the deadline.
+      process.stdout.write(`\r  poll retry after ${(error as Error).name}          `);
+    }
     await sleep(20_000);
   }
-  throw new Error("AppEEARS task timed out");
+  throw new Error(`AppEEARS task did not finish within ${Math.round(timeoutMs / 60_000)} min (last status: ${last || "none"})`);
 }
 
 /** Locate and download the NDVI results CSV from the finished task bundle. */
 async function fetchResultsCsv(token: string, taskId: string): Promise<string> {
-  const bundle = (await (await fetch(`${API}/bundle/${taskId}`, {
+  const bundle = (await (await fetchT(`${API}/bundle/${taskId}`, {
     headers: { Authorization: `Bearer ${token}` },
   })).json()) as { files?: { file_id: string; file_name: string }[] };
   const csv = bundle.files?.find(f => f.file_name.endsWith(".csv") && /NDVI|results/i.test(f.file_name))
     ?? bundle.files?.find(f => f.file_name.endsWith(".csv"));
   if (!csv) throw new Error("No results CSV in AppEEARS bundle");
-  const response = await fetch(`${API}/bundle/${taskId}/${csv.file_id}`, {
+  const response = await fetchT(`${API}/bundle/${taskId}/${csv.file_id}`, {
     headers: { Authorization: `Bearer ${token}` },
-  });
+  }, 120_000);
   if (!response.ok) throw new Error(`Bundle download failed: ${response.status}`);
   return response.text();
 }

@@ -23,6 +23,31 @@ export function monthlyUrl(version: ChirpsVersion, year: number, month: number) 
     : `${V2_ROOT}/global_monthly/tifs/chirps-v2.0.${year}.${pad(month)}.tif.gz`;
 }
 
+export type Candidate = { version: ChirpsVersion; url: string; preliminary: boolean };
+
+/**
+ * Final CHIRPS runs roughly three weeks behind, so the most recent weeks only
+ * exist in the preliminary products. Ordered strictly by preference: v3 before
+ * v2, and final before preliminary within each version.
+ */
+export function dailyCandidates(date: string): Candidate[] {
+  const [year, month, day] = date.split("-");
+  return [
+    { version: "3.0", url: `${V3_ROOT}/daily/final/rnl/${year}/chirps-v3.0.rnl.${year}.${month}.${day}.tif`, preliminary: false },
+    { version: "3.0", url: `${V3_ROOT}/daily/prelim/${year}/chirps-v3.0.${year}.${month}.${day}.tif`, preliminary: true },
+    { version: "2.0", url: `${V2_ROOT}/global_daily/tifs/p05/${year}/chirps-v2.0.${year}.${month}.${day}.tif.gz`, preliminary: false },
+    { version: "2.0", url: `${V2_ROOT}/prelim/global_daily/tifs/p05/${year}/chirps-v2.0.${year}.${month}.${day}.tif`, preliminary: true },
+  ];
+}
+
+export function monthlyCandidates(year: number, month: number): Candidate[] {
+  return [
+    { version: "3.0", url: monthlyUrl("3.0", year, month), preliminary: false },
+    { version: "2.0", url: monthlyUrl("2.0", year, month), preliminary: false },
+    { version: "2.0", url: `${V2_ROOT}/prelim/global_monthly/tifs/chirps-v2.0.${year}.${pad(month)}.tif`, preliminary: true },
+  ];
+}
+
 /**
  * CHIRPS is natively a pentad product; daily values are downscaled. We use the
  * `rnl` (ERA5-partitioned) series because it spans the whole 1981-present
@@ -106,14 +131,32 @@ export async function readPointsWithFallback(
   points: PointRequest[],
   signal?: AbortSignal
 ): Promise<{ version: ChirpsVersion; samples: PointSample[] }> {
-  try {
-    return { version: "3.0", samples: await readPoints(buildUrl("3.0"), points, signal) };
-  } catch (v3Error) {
-    if (signal?.aborted) throw v3Error;
+  const result = await readPointsFromCandidates(
+    [
+      { version: "3.0", url: buildUrl("3.0"), preliminary: false },
+      { version: "2.0", url: buildUrl("2.0"), preliminary: false },
+    ],
+    points,
+    signal
+  );
+  return { version: result.version, samples: result.samples };
+}
+
+/** Walks candidates in preference order and returns the first that reads. */
+export async function readPointsFromCandidates(
+  candidates: Candidate[],
+  points: PointRequest[],
+  signal?: AbortSignal
+): Promise<{ version: ChirpsVersion; preliminary: boolean; samples: PointSample[] }> {
+  let firstError: unknown;
+  for (const candidate of candidates) {
     try {
-      return { version: "2.0", samples: await readPoints(buildUrl("2.0"), points, signal) };
-    } catch {
-      throw v3Error;
+      const samples = await readPoints(candidate.url, points, signal);
+      return { version: candidate.version, preliminary: candidate.preliminary, samples };
+    } catch (error) {
+      firstError ??= error;
+      if (signal?.aborted) throw error;
     }
   }
+  throw firstError ?? new Error("No CHIRPS candidate could be read");
 }

@@ -1,5 +1,10 @@
+import {
+  FIRST_RAINY_SEASON_YEAR,
+  currentRainySeasonStartYear,
+  todayIso,
+} from "@shared/const";
 import chirpsMonthly from "./data/chirps-monthly.json" with { type: "json" };
-import { CHIRPS_SOURCE_URL, dailyUrl, readPointsWithFallback, type ChirpsVersion } from "./chirps";
+import { CHIRPS_SOURCE_URL, dailyCandidates, readPointsFromCandidates, type ChirpsVersion } from "./chirps";
 import { PALESTINIAN_CITIES, type PalestinianCity } from "./cities";
 
 export { PALESTINIAN_CITIES };
@@ -50,9 +55,10 @@ type MonthlyDataset = {
 
 const MONTHLY = chirpsMonthly as MonthlyDataset;
 
-const FIRST_DATA_DATE = "2000-01-01";
-// This application intentionally stops within the requested August 2026 window.
-const MAX_REQUEST_DATE = "2026-08-20";
+const FIRST_DATA_DATE = `${FIRST_RAINY_SEASON_YEAR}-01-01`;
+// Coverage runs to today rather than a pinned date, so the app keeps showing
+// the most recent CHIRPS data without an annual code change.
+const maxRequestDate = () => todayIso();
 const CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 // CHC answers 403 when hit hard, so keep the per-request fan-out modest.
 const DAILY_CONCURRENCY = 8;
@@ -61,7 +67,7 @@ type DailyObservation = { date: string; precipitationMm: number };
 
 const dailyCache = new Map<
   string,
-  { expiresAt: number; version: ChirpsVersion; data: DailyObservation[] }
+  { expiresAt: number; version: ChirpsVersion; preliminary: boolean; data: DailyObservation[] }
 >();
 
 export function sourceLabel(version: ChirpsVersion): ChirpsSourceLabel {
@@ -69,7 +75,8 @@ export function sourceLabel(version: ChirpsVersion): ChirpsSourceLabel {
 }
 
 function clampEndDate(date: string) {
-  return date > MAX_REQUEST_DATE ? MAX_REQUEST_DATE : date;
+  const max = maxRequestDate();
+  return date > max ? max : date;
 }
 
 function round(value: number) {
@@ -91,7 +98,7 @@ export function rainySeasonLabel(seasonStartYear: number) {
 }
 
 export function resolveRainySeasonRange(seasonStartYear: number): { start: string; end: string } {
-  if (seasonStartYear < 2000 || seasonStartYear > 2025) {
+  if (seasonStartYear < FIRST_RAINY_SEASON_YEAR || seasonStartYear > currentRainySeasonStartYear()) {
     throw new Error("الموسم المطري المختار غير متاح ضمن نطاق البيانات.");
   }
   return { start: `${seasonStartYear}-08-01`, end: `${seasonStartYear + 1}-05-31` };
@@ -108,7 +115,7 @@ export function resolveRainfallRange(
     }
     const start = `${year}-${String(month).padStart(2, "0")}-01`;
     const end = clampEndDate(`${year}-${String(month).padStart(2, "0")}-${monthDays(year, month)}`);
-    if (start > MAX_REQUEST_DATE) {
+    if (start > maxRequestDate()) {
       throw new Error("الفترة المطلوبة تأتي بعد آخر تاريخ متاح في المصدر.");
     }
     return { start, end };
@@ -118,7 +125,7 @@ export function resolveRainfallRange(
     return resolveRainySeasonRange(year);
   }
 
-  return { start: FIRST_DATA_DATE, end: MAX_REQUEST_DATE };
+  return { start: FIRST_DATA_DATE, end: maxRequestDate() };
 }
 
 export function aggregateRainfallData(
@@ -170,17 +177,18 @@ async function fetchDailyObservations(
   city: PalestinianCity,
   start: string,
   end: string
-): Promise<{ observations: DailyObservation[]; version: ChirpsVersion }> {
+): Promise<{ observations: DailyObservation[]; version: ChirpsVersion; preliminary: boolean }> {
   const cacheKey = `${city.id}:${start}:${end}`;
   const cached = dailyCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
-    return { observations: cached.data, version: cached.version };
+    return { observations: cached.data, version: cached.version, preliminary: cached.preliminary };
   }
 
   const point = { id: city.id, longitude: city.longitude, latitude: city.latitude };
   const dates = eachDate(start, end);
   const observations: DailyObservation[] = [];
   let version: ChirpsVersion = "3.0";
+  let preliminary = false;
   let failures = 0;
 
   for (let index = 0; index < dates.length; index += DAILY_CONCURRENCY) {
@@ -188,13 +196,15 @@ async function fetchDailyObservations(
     const results = await Promise.all(
       batch.map(async date => {
         try {
-          const { version: used, samples } = await readPointsWithFallback(
-            candidate => dailyUrl(candidate, date),
-            [point]
-          );
-          return { date, used, value: samples[0]?.precipitationMm ?? null };
+          const read = await readPointsFromCandidates(dailyCandidates(date), [point]);
+          return {
+            date,
+            used: read.version as ChirpsVersion | null,
+            prelim: read.preliminary,
+            value: read.samples[0]?.precipitationMm ?? null,
+          };
         } catch {
-          return { date, used: null, value: null };
+          return { date, used: null as ChirpsVersion | null, prelim: false, value: null };
         }
       })
     );
@@ -204,6 +214,7 @@ async function fetchDailyObservations(
         continue;
       }
       if (result.used === "2.0") version = "2.0";
+      if (result.prelim) preliminary = true;
       observations.push({ date: result.date, precipitationMm: result.value });
     }
   }
@@ -217,8 +228,8 @@ async function fetchDailyObservations(
   }
 
   observations.sort((left, right) => left.date.localeCompare(right.date));
-  dailyCache.set(cacheKey, { data: observations, version, expiresAt: Date.now() + CACHE_TTL_MS });
-  return { observations, version };
+  dailyCache.set(cacheKey, { data: observations, version, preliminary, expiresAt: Date.now() + CACHE_TTL_MS });
+  return { observations, version, preliminary };
 }
 
 /** Monthly and annual views read the precomputed CHIRPS monthly totals. */
@@ -254,17 +265,19 @@ export async function getRainfallSeries(input: {
     input.granularity === "daily"
       ? resolveRainfallRange("daily", input.year, input.month)
       : allSeasons
-        ? { start: "2000-08-01", end: "2026-05-31" }
-        : resolveRainySeasonRange(input.seasonStartYear ?? 2025);
+        ? { start: `${FIRST_RAINY_SEASON_YEAR}-08-01`, end: maxRequestDate() }
+        : resolveRainySeasonRange(input.seasonStartYear ?? currentRainySeasonStartYear());
   const selectedSeasonStartYear = input.seasonStartYear ?? rainySeasonStartForDate(range.start);
 
   let records: RainfallRecord[];
   let version: ChirpsVersion = "3.0";
+  let preliminary = false;
   let availableThrough: string | null = null;
 
   if (input.granularity === "daily") {
     const daily = await fetchDailyObservations(city, range.start, range.end);
     version = daily.version;
+    preliminary = daily.preliminary;
     records = aggregateRainfallData(daily.observations, "daily", sourceLabel(version));
     availableThrough = daily.observations.at(-1)?.date ?? null;
   } else {
@@ -324,13 +337,15 @@ export async function getRainfallSeries(input: {
     metadata: {
       source:
         input.granularity === "daily"
-          ? `${sourceLabel(version)} Daily`
+          ? `${sourceLabel(version)} Daily${preliminary ? " (أولي)" : ""}`
           : `${sourceLabel(version)} Monthly`,
       parameter: "precipitation",
       unit: "mm",
       requestedStart: range.start,
       requestedEnd: range.end,
-      rainySeasonLabel: allSeasons ? "2000/2001 حتى 2025/2026" : rainySeasonLabel(selectedSeasonStartYear),
+      rainySeasonLabel: allSeasons
+        ? `${rainySeasonLabel(FIRST_RAINY_SEASON_YEAR)} حتى ${rainySeasonLabel(currentRainySeasonStartYear())}`
+        : rainySeasonLabel(selectedSeasonStartYear),
       availableThrough,
       aggregation:
         input.granularity === "daily"

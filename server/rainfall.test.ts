@@ -1,3 +1,4 @@
+import { currentRainySeasonStartYear, todayIso } from "@shared/const";
 import { describe, expect, it } from "vitest";
 import { PALESTINIAN_CITIES, aggregateRainfallData, getRainfallSeries, rainySeasonLabel, resolveRainfallRange, resolveRainySeasonRange } from "./rainfall";
 
@@ -24,11 +25,26 @@ describe("aggregateRainfallData", () => {
     ]);
   });
 
-  it("يضبط فلاتر اليوم والموسم المطري ضمن حدود آب 2026", () => {
-    expect(resolveRainfallRange("daily", 2026, 8)).toEqual({ start: "2026-08-01", end: "2026-08-20" });
+  it("يقصر النطاق اليومي على تاريخ اليوم ويضبط حدود الموسم المطري", () => {
+    // الشهر الجاري: لا يتجاوز النطاق تاريخ اليوم
+    const today = todayIso();
+    const [year, month] = today.split("-").map(Number);
+    expect(resolveRainfallRange("daily", year, month)).toEqual({
+      start: `${today.slice(0, 7)}-01`,
+      end: today,
+    });
+    // شهر مكتمل في الماضي: ينتهي بآخر يوم فيه
+    expect(resolveRainfallRange("daily", 2020, 2)).toEqual({ start: "2020-02-01", end: "2020-02-29" });
     expect(resolveRainySeasonRange(2025)).toEqual({ start: "2025-08-01", end: "2026-05-31" });
     expect(resolveRainfallRange("monthly", 2025)).toEqual({ start: "2025-08-01", end: "2026-05-31" });
     expect(rainySeasonLabel(2025)).toBe("2025/2026");
+  });
+
+  it("يتيح الموسم المطري الجاري ويرفض ما بعده", () => {
+    const current = currentRainySeasonStartYear();
+    expect(() => resolveRainySeasonRange(current)).not.toThrow();
+    expect(() => resolveRainySeasonRange(current + 1)).toThrow();
+    expect(() => resolveRainySeasonRange(1999)).toThrow();
   });
 
   it("يوفر المدن الفلسطينية المطلوبة ضمن دليل الاختيار", () => {

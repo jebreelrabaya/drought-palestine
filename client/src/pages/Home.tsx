@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { exportRainfallToXlsx } from "@/lib/exportRainfall";
 import { trpc } from "@/lib/trpc";
+import { FIRST_RAINY_SEASON_YEAR, currentRainySeasonStartYear } from "@shared/const";
 import {
   AreaChart,
   BarChart3,
@@ -59,7 +60,11 @@ const rainySeasonMonths = [
   { value: 8, label: "آب" }, { value: 9, label: "أيلول" }, { value: 10, label: "تشرين الأول" }, { value: 11, label: "تشرين الثاني" }, { value: 12, label: "كانون الأول" },
   { value: 1, label: "كانون الثاني" }, { value: 2, label: "شباط" }, { value: 3, label: "آذار" }, { value: 4, label: "نيسان" }, { value: 5, label: "أيار" },
 ];
-const rainySeasonYears = Array.from({ length: 26 }, (_, index) => 2000 + index);
+const currentSeason = currentRainySeasonStartYear();
+const rainySeasonYears = Array.from(
+  { length: currentSeason - FIRST_RAINY_SEASON_YEAR + 1 },
+  (_, index) => FIRST_RAINY_SEASON_YEAR + index
+);
 
 function arabicNumber(value: number, fractionDigits = 0) {
   return new Intl.NumberFormat("ar-PS", {
@@ -101,7 +106,7 @@ function StatCard({ icon: Icon, label, value, accent }: { icon: typeof CloudRain
 export default function Home() {
   const [cityId, setCityId] = useState("gaza");
   const [granularity, setGranularity] = useState<Granularity>("monthly");
-  const [seasonStartYear, setSeasonStartYear] = useState("2025");
+  const [seasonStartYear, setSeasonStartYear] = useState(String(currentSeason));
   const [month, setMonth] = useState("8");
   const [chartType, setChartType] = useState<"line" | "bar">("line");
 
@@ -132,7 +137,7 @@ export default function Home() {
   const handleGranularity = (next: Granularity) => {
     setGranularity(next);
     if (next === "annual") setSeasonStartYear("all");
-    if (next !== "annual" && seasonStartYear === "all") setSeasonStartYear("2025");
+    if (next !== "annual" && seasonStartYear === "all") setSeasonStartYear(String(currentSeason));
   };
 
   const handleExport = () => {
@@ -171,7 +176,7 @@ export default function Home() {
               افهم نمط المطر، <span className="text-[#eec76e]">مدينةً بعد مدينة.</span>
             </h1>
             <p className="mt-6 max-w-2xl text-base leading-8 text-emerald-50/80 sm:text-lg">
-              منصة عربية تتيح استعراض وتحميل الهطول اليومي والشهري والموسمي لمدن فلسطين وفق الموسم المطري الفلسطيني، من آب حتى أيار، ضمن التغطية المتاحة حتى آب 2026.
+              منصة عربية تتيح استعراض وتحميل الهطول اليومي والشهري والموسمي لمدن فلسطين وفق الموسم المطري الفلسطيني، من آب حتى أيار، ضمن التغطية المتاحة حتى اليوم.
             </p>
             <div className="mt-8 flex flex-wrap gap-x-7 gap-y-3 text-sm text-emerald-100/90">
               <span className="inline-flex items-center gap-2"><Satellite className="size-4 text-[#eec76e]" />CHIRPS v3.0 (CHC/UCSB)</span>
@@ -184,7 +189,7 @@ export default function Home() {
             <div className="flex items-start justify-between gap-5">
               <div>
                 <p className="text-xs font-semibold text-[#eec76e]">نافذة البيانات</p>
-                <p className="mt-1 font-[Noto_Kufi_Arabic] text-lg font-semibold">2000 — آب 2026</p>
+                <p className="mt-1 font-[Noto_Kufi_Arabic] text-lg font-semibold">{FIRST_RAINY_SEASON_YEAR} — {currentSeason}/{currentSeason + 1}</p>
               </div>
               <div className="rounded-2xl bg-white/10 px-3 py-2 text-left">
                 <p className="text-[10px] text-emerald-100/75">النطاق المكاني</p>

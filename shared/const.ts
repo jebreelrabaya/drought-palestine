@@ -35,3 +35,18 @@ export const decodeOAuthState = (state: string): OAuthState => {
   }
   return { redirectUri: decoded };
 };
+
+// Rainfall coverage bounds. The Palestinian rainy season runs August to May,
+// so a date in August or later belongs to the season named for that year.
+// These are computed rather than pinned so the app keeps reaching "today"
+// without a code change each year.
+export const FIRST_RAINY_SEASON_YEAR = 2000;
+
+export function currentRainySeasonStartYear(now: Date = new Date()): number {
+  const year = now.getUTCFullYear();
+  return now.getUTCMonth() + 1 >= 8 ? year : year - 1;
+}
+
+export function todayIso(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}

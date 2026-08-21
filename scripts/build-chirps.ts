@@ -6,16 +6,28 @@
  * because covering every rainy season on demand would mean ~260 raster reads
  * per request. Re-run this when new CHIRPS months are published:
  *   pnpm run build:chirps
+ *
+ * Two sources, in the project's required order of preference:
+ *   1. CHIRPS v3.0 rasters straight from data.chc.ucsb.edu (one file per
+ *      month, all cities read from it).
+ *   2. CHIRPS v2.0 via ClimateSERV, used only when CHC is unreachable. CHC
+ *      answers 403 for hours once its rate limit is tripped, and ClimateSERV
+ *      is separate infrastructure, so this keeps the backfill possible.
+ *
+ * The run is resumable and self-upgrading: months already stored as v3.0 are
+ * skipped, and months stored as v2.0 are retried against v3.0 whenever CHC is
+ * reachable again.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { PALESTINIAN_CITIES } from "../server/cities";
 import { monthlyUrl, readPointsWithFallback, type ChirpsVersion } from "../server/chirps";
+import { fetchMonthlyTotals } from "../server/climateserv";
 
 const FIRST_YEAR = 2000;
 // CHC rate-limits with 403 once you hit it hard, so stay gentle and back off.
 const CONCURRENCY = 3;
-const RETRIES = 5;
+const RETRIES = 4;
 const BASE_BACKOFF_MS = 4000;
 const OUT = path.resolve(import.meta.dirname, "..", "server", "data", "chirps-monthly.json");
 
@@ -26,6 +38,15 @@ const points = PALESTINIAN_CITIES.map(city => ({
 }));
 
 type MonthEntry = { version: ChirpsVersion; values: Record<string, number | null> };
+type Dataset = {
+  generatedAt: string;
+  product: string;
+  cities: string[];
+  months: Record<string, MonthEntry>;
+};
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const monthKey = (year: number, month: number) => `${year}-${String(month).padStart(2, "0")}`;
 
 function monthsToBuild() {
   const now = new Date();
@@ -33,15 +54,22 @@ function monthsToBuild() {
   for (let year = FIRST_YEAR; year <= now.getUTCFullYear(); year++) {
     for (let month = 1; month <= 12; month++) {
       if (year === now.getUTCFullYear() && month > now.getUTCMonth() + 1) break;
-      months.push({ year, month, key: `${year}-${String(month).padStart(2, "0")}` });
+      months.push({ year, month, key: monthKey(year, month) });
     }
   }
   return months;
 }
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+async function chcReachable() {
+  try {
+    const response = await fetch(monthlyUrl("3.0", 2015, 6), { method: "HEAD" });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
 
-async function buildMonth(year: number, month: number): Promise<MonthEntry | null> {
+async function buildMonthFromChc(year: number, month: number): Promise<MonthEntry | null> {
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
     try {
       const { version, samples } = await readPointsWithFallback(v => monthlyUrl(v, year, month), points);
@@ -59,35 +87,76 @@ async function buildMonth(year: number, month: number): Promise<MonthEntry | nul
   return null; // month not published yet, or unreachable in both versions
 }
 
+async function backfillFromChc(months: Record<string, MonthEntry>, targets: ReturnType<typeof monthsToBuild>) {
+  let done = 0;
+  for (let index = 0; index < targets.length; index += CONCURRENCY) {
+    const batch = targets.slice(index, index + CONCURRENCY);
+    const results = await Promise.all(batch.map(t => buildMonthFromChc(t.year, t.month)));
+    batch.forEach((target, offset) => {
+      done++;
+      const entry = results[offset];
+      if (entry) months[target.key] = entry;
+    });
+    process.stdout.write(`\r  CHC v3: ${done}/${targets.length} months`);
+    await sleep(250);
+  }
+  process.stdout.write("\n");
+}
+
+async function backfillFromClimateServ(
+  months: Record<string, MonthEntry>,
+  targets: ReturnType<typeof monthsToBuild>
+) {
+  const wanted = new Set(targets.map(t => t.key));
+  const start = `${FIRST_YEAR}-01-01`;
+  const end = new Date().toISOString().slice(0, 10);
+
+  for (const [index, city] of PALESTINIAN_CITIES.entries()) {
+    process.stdout.write(`\r  ClimateSERV v2: ${index + 1}/${PALESTINIAN_CITIES.length} ${city.id}          `);
+    let totals: Record<string, number>;
+    try {
+      totals = await fetchMonthlyTotals(city.longitude, city.latitude, start, end);
+    } catch (error) {
+      console.warn(`\n  ${city.id} failed: ${(error as Error).message}`);
+      continue;
+    }
+    for (const [key, value] of Object.entries(totals)) {
+      if (!wanted.has(key)) continue;
+      const entry = months[key] ?? { version: "2.0" as ChirpsVersion, values: {} };
+      // Never let a v2 reading overwrite a v3 one for the same city/month.
+      if (entry.version === "3.0" && entry.values[city.id] !== undefined) continue;
+      entry.version = entry.version === "3.0" ? "3.0" : "2.0";
+      entry.values[city.id] = value;
+      months[key] = entry;
+    }
+  }
+  process.stdout.write("\n");
+}
+
 async function main() {
   const all = monthsToBuild();
-  // Resume: keep whatever a previous run already fetched so a throttled run
-  // can simply be re-run until it completes.
-  const months: Record<string, MonthEntry> =
-    existsSync(OUT) ? (JSON.parse(readFileSync(OUT, "utf8")).months ?? {}) : {};
-  const targets = all.filter(t => !months[t.key]);
-  console.log(`${all.length} months total, ${targets.length} to fetch`);
-  let done = 0;
-  let missing = 0;
-  const counts: Record<string, number> = { "3.0": 0, "2.0": 0 };
+  const existing: Dataset | null = existsSync(OUT) ? JSON.parse(readFileSync(OUT, "utf8")) : null;
+  const months: Record<string, MonthEntry> = existing?.months ?? {};
 
-  for (let i = 0; i < targets.length; i += CONCURRENCY) {
-    const batch = targets.slice(i, i + CONCURRENCY);
-    const results = await Promise.all(batch.map(t => buildMonth(t.year, t.month)));
-    await sleep(250);
-    batch.forEach((target, index) => {
-      const entry = results[index];
-      done++;
-      if (!entry) {
-        missing++;
-        return;
-      }
-      months[target.key] = entry;
-      counts[entry.version]++;
-    });
-    process.stdout.write(`\r${done}/${targets.length} months  v3=${counts["3.0"]} v2=${counts["2.0"]} missing=${missing}   `);
+  const reachable = await chcReachable();
+  console.log(`${all.length} months wanted, ${Object.keys(months).length} already stored`);
+  console.log(`CHC v3 reachable: ${reachable ? "yes" : "no (falling back to ClimateSERV v2)"}`);
+
+  if (reachable) {
+    // Fetch what is missing, and re-try anything currently held at v2.0.
+    const targets = all.filter(t => !months[t.key] || months[t.key].version === "2.0");
+    console.log(`  ${targets.length} months to fetch or upgrade`);
+    if (targets.length) await backfillFromChc(months, targets);
+  } else {
+    const targets = all.filter(t => !months[t.key]);
+    console.log(`  ${targets.length} months missing`);
+    if (targets.length) await backfillFromClimateServ(months, targets);
   }
 
+  const versions: Record<string, number> = {};
+  for (const entry of Object.values(months)) versions[entry.version] = (versions[entry.version] ?? 0) + 1;
+
+  const ordered = Object.fromEntries(Object.entries(months).sort(([a], [b]) => a.localeCompare(b)));
   mkdirSync(path.dirname(OUT), { recursive: true });
   writeFileSync(
     OUT,
@@ -96,13 +165,14 @@ async function main() {
         generatedAt: new Date().toISOString(),
         product: "CHIRPS monthly global 0.05°",
         cities: PALESTINIAN_CITIES.map(c => c.id),
-        months,
+        months: ordered,
       },
       null,
       0
     )}\n`
   );
-  console.log(`\nwrote ${OUT} (${Object.keys(months).length} months)`);
+  const keys = Object.keys(ordered);
+  console.log(`wrote ${keys.length} months (${keys[0]} .. ${keys.at(-1)}) v3=${versions["3.0"] ?? 0} v2=${versions["2.0"] ?? 0}`);
 }
 
 main().catch(error => {

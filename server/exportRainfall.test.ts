@@ -15,7 +15,7 @@ describe("exportRainfallToXlsx", () => {
     exportRainfallToXlsx({
       city: { name: "غزة", latitude: 31.5017, longitude: 34.4668 },
       granularity: "monthly",
-      records: [{ period: "2025-01", precipitationMm: 32.4, daysObserved: 31, source: "CHIRPS v3.0" }],
+      records: [{ period: "2025-01", precipitationMm: 32.4, daysObserved: 31, source: "CHIRPS v3.0", spi6: -1.2, spi12: 0.8 }],
       metadata: {
         source: "CHIRPS v3.0 Monthly",
         parameter: "precipitation",
@@ -35,7 +35,8 @@ describe("exportRainfallToXlsx", () => {
     expect(call?.[1]).toBe("أمطار_غزة_شهري_موسم_2025-2026.xlsx");
     expect(workbook.SheetNames).toEqual(["بيانات الأمطار", "المصدر والمنهجية"]);
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets["بيانات الأمطار"], { header: 1 });
-    expect(rows[1]).toEqual(["2025-01", 32.4, 31, "CHIRPS v3.0"]);
+    expect(rows[0]).toEqual(["الفترة", "الهطول (ملم)", "SPI-6", "SPI-12", "عدد الأيام المرصودة", "المصدر"]);
+    expect(rows[1]).toEqual(["2025-01", 32.4, -1.2, 0.8, 31, "CHIRPS v3.0"]);
     writeFile.mockReset();
   });
 });

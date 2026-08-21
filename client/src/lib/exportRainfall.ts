@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 type RainfallExportPayload = {
   city: { name: string; latitude: number; longitude: number };
   granularity: "daily" | "monthly" | "annual";
-  records: Array<{ period: string; precipitationMm: number; daysObserved: number; source: string }>;
+  records: Array<{ period: string; precipitationMm: number; daysObserved: number; source: string; spi6?: number | null; spi12?: number | null }>;
   metadata: {
     source: string;
     parameter: string;
@@ -24,9 +24,13 @@ const granularityLabels = {
 } as const;
 
 export function exportRainfallToXlsx(payload: RainfallExportPayload) {
+  const withSpi = payload.granularity === "monthly";
   const dataRows = payload.records.map(record => ({
     الفترة: record.period,
     "الهطول (ملم)": record.precipitationMm,
+    ...(withSpi
+      ? { "SPI-6": record.spi6 ?? "", "SPI-12": record.spi12 ?? "" }
+      : {}),
     "عدد الأيام المرصودة": record.daysObserved,
     المصدر: record.source,
   }));
@@ -47,7 +51,9 @@ export function exportRainfallToXlsx(payload: RainfallExportPayload) {
   const workbook = XLSX.utils.book_new();
   const dataSheet = XLSX.utils.json_to_sheet(dataRows);
   const sourceSheet = XLSX.utils.json_to_sheet(metadataRows);
-  dataSheet["!cols"] = [{ wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 16 }];
+  dataSheet["!cols"] = withSpi
+    ? [{ wch: 18 }, { wch: 18 }, { wch: 10 }, { wch: 10 }, { wch: 22 }, { wch: 16 }]
+    : [{ wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 16 }];
   sourceSheet["!cols"] = [{ wch: 22 }, { wch: 70 }];
   XLSX.utils.book_append_sheet(workbook, dataSheet, "بيانات الأمطار");
   XLSX.utils.book_append_sheet(workbook, sourceSheet, "المصدر والمنهجية");

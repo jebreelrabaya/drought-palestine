@@ -8,6 +8,7 @@ import chirpsMonthly from "./data/chirps-monthly.json" with { type: "json" };
 import { CHIRPS_SOURCE_URL, dailyCandidates, readPointsFromCandidates, type ChirpsVersion } from "./chirps";
 import { PALESTINIAN_CITIES, type PalestinianCity } from "./cities";
 import { NASA_SOURCE_URL } from "./nasa";
+import { computeSpi, type MonthlyPoint } from "./spi";
 
 export { PALESTINIAN_CITIES };
 export type { PalestinianCity };
@@ -22,6 +23,9 @@ export type RainfallRecord = {
   precipitationMm: number;
   daysObserved: number;
   source: ChirpsSourceLabel;
+  // Standardized Precipitation Index, populated for the monthly granularity only.
+  spi6?: number | null;
+  spi12?: number | null;
 };
 
 export type RainfallSeries = {
@@ -260,6 +264,14 @@ async function fetchDailyObservations(
   return { observations, version, preliminary };
 }
 
+/** The city's full continuous monthly series — SPI must be fitted over all of it. */
+function fullMonthlySeries(cityId: string): MonthlyPoint[] {
+  return MONTH_KEYS.map(period => ({
+    period,
+    precipitationMm: MONTHLY.months[period].values[cityId] ?? null,
+  }));
+}
+
 /** Monthly and annual views read the precomputed CHIRPS monthly totals. */
 function monthlyRecords(city: PalestinianCity, start: string, end: string) {
   const startKey = start.slice(0, 7);
@@ -328,11 +340,17 @@ export async function getRainfallSeries(input: {
     availableThrough = monthly.at(-1)?.period ?? null;
 
     if (input.granularity === "monthly") {
+      // SPI is fitted over the whole record, then attached to the shown months.
+      const fullSeries = fullMonthlySeries(city.id);
+      const spi6 = computeSpi(fullSeries, 6);
+      const spi12 = computeSpi(fullSeries, 12);
       records = monthly.map(record => ({
         period: record.period,
         precipitationMm: round(record.precipitationMm),
         daysObserved: monthDays(Number(record.period.slice(0, 4)), Number(record.period.slice(5, 7))),
         source: sourceLabel(record.version),
+        spi6: spi6.get(record.period) ?? null,
+        spi12: spi12.get(record.period) ?? null,
       }));
     } else {
       const seasons = new Map<string, { total: number; days: number; version: DataVersion }>();

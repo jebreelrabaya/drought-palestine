@@ -24,7 +24,10 @@ import { useMemo, useState } from "react";
 import {
   Bar,
   CartesianGrid,
+  ComposedChart,
+  Legend,
   Line,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -90,6 +93,17 @@ function formatShortPeriod(period: string, granularity: Granularity) {
   if (granularity === "annual") return period.replace("20", "").replace("/20", "/");
   if (granularity === "monthly") return `${period.slice(5)} / ${period.slice(2, 4)}`;
   return `${period.slice(8)} / ${period.slice(5, 7)}`;
+}
+
+// McKee et al. 1993 drought classification for an SPI value.
+function spiCategory(value: number | null | undefined): { label: string; color: string } {
+  if (value === null || value === undefined) return { label: "—", color: "#94a3b8" };
+  if (value >= 2) return { label: "رطب جدًا", color: "#1d4ed8" };
+  if (value >= 1) return { label: "رطب", color: "#2777b9" };
+  if (value > -1) return { label: "طبيعي", color: "#64748b" };
+  if (value > -1.5) return { label: "جفاف معتدل", color: "#c2760c" };
+  if (value > -2) return { label: "جفاف شديد", color: "#c0562f" };
+  return { label: "جفاف قاسٍ", color: "#a02020" };
 }
 
 function StatCard({ icon: Icon, label, value, accent }: { icon: typeof CloudRain; label: string; value: string; accent: string }) {
@@ -306,7 +320,7 @@ export default function Home() {
             <div className="mt-5 grid gap-5 xl:grid-cols-[1.55fr_.85fr]">
               <section className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-[0_12px_35px_-30px_rgba(8,70,65,.45)]">
                 <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-                  <div><p className="text-sm font-bold text-slate-800">توزيع الهطول عبر الزمن</p><p className="mt-1 text-xs text-slate-500">استكشف القيم المجمّعة بحسب الاختيار الحالي.</p></div>
+                  <div><p className="text-sm font-bold text-slate-800">توزيع الهطول عبر الزمن</p><p className="mt-1 text-xs text-slate-500">{granularity === "monthly" ? "الأعمدة/الخط: الهطول (ملم) — الخطان SPI-6 وSPI-12 مؤشرا الجفاف (المحور الأيمن؛ أقل من صفر = جفاف)." : "استكشف القيم المجمّعة بحسب الاختيار الحالي."}</p></div>
                   <div className="inline-flex w-fit rounded-xl bg-slate-100 p-1">
                     <button type="button" onClick={() => setChartType("line")} className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${chartType === "line" ? "bg-white text-[#0b5b55] shadow-sm" : "text-slate-500"}`}><LineChart className="size-3.5" />خطي</button>
                     <button type="button" onClick={() => setChartType("bar")} className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${chartType === "bar" ? "bg-white text-[#0b5b55] shadow-sm" : "text-slate-500"}`}><BarChart3 className="size-3.5" />أعمدة</button>
@@ -314,7 +328,24 @@ export default function Home() {
                 </div>
                 <div className="h-[330px] px-1 pb-3 pt-5 sm:px-4">
                   <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260}>
-                    {chartType === "line" ? (
+                    {granularity === "monthly" ? (
+                      <ComposedChart data={chartData} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+                        <CartesianGrid vertical={false} stroke="#e7eee9" strokeDasharray="3 5" />
+                        <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: "#70817c", fontSize: 11 }} minTickGap={26} />
+                        <YAxis yAxisId="mm" axisLine={false} tickLine={false} tick={{ fill: "#70817c", fontSize: 11 }} width={42} />
+                        <YAxis yAxisId="spi" orientation="right" domain={[-3, 3]} ticks={[-2, -1, 0, 1, 2]} axisLine={false} tickLine={false} tick={{ fill: "#9a7bb5", fontSize: 11 }} width={30} />
+                        <ReferenceLine yAxisId="spi" y={0} stroke="#cbd5e1" strokeDasharray="2 4" />
+                        <Tooltip cursor={{ fill: "#f1f8f5" }} contentStyle={{ borderRadius: 14, border: "1px solid #dcebe5", fontFamily: "Noto Sans Arabic", fontSize: 12 }} labelFormatter={(_, payload) => payload?.[0]?.payload?.fullLabel ?? ""} formatter={(value: number, name: string) => (name.startsWith("SPI") ? [arabicNumber(value, 2), name] : [`${arabicNumber(value, 2)} ملم`, "الهطول"])} />
+                        <Legend wrapperStyle={{ fontSize: 11, fontFamily: "Noto Sans Arabic" }} />
+                        {chartType === "line" ? (
+                          <Line yAxisId="mm" name="الهطول" type="monotone" dataKey="precipitationMm" stroke="#0b8d80" strokeWidth={3} dot={false} activeDot={{ r: 5, fill: "#e5b759", strokeWidth: 0 }} />
+                        ) : (
+                          <Bar yAxisId="mm" name="الهطول" dataKey="precipitationMm" fill="#0b8d80" radius={[6, 6, 0, 0]} maxBarSize={32} />
+                        )}
+                        <Line yAxisId="spi" name="SPI-6" type="monotone" dataKey="spi6" stroke="#c2760c" strokeWidth={2} dot={false} connectNulls />
+                        <Line yAxisId="spi" name="SPI-12" type="monotone" dataKey="spi12" stroke="#7a52b3" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls />
+                      </ComposedChart>
+                    ) : chartType === "line" ? (
                       <RechartsLineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                         <defs><linearGradient id="rainGradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#0b8d80" stopOpacity=".34" /><stop offset="100%" stopColor="#0b8d80" stopOpacity="0" /></linearGradient></defs>
                         <CartesianGrid vertical={false} stroke="#e7eee9" strokeDasharray="3 5" />
@@ -353,10 +384,14 @@ export default function Home() {
             <section className="mt-5 overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-[0_12px_35px_-30px_rgba(8,70,65,.45)]">
               <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div><h3 className="font-[Noto_Kufi_Arabic] text-sm font-bold text-slate-800">الجدول التفاعلي</h3><p className="mt-1 text-xs text-slate-500">البيانات المعروضة هي نفسها التي سيحتويها ملف Excel.</p></div><span className="w-fit rounded-full bg-[#e9f5ef] px-3 py-1 text-xs font-bold text-[#0b7067]">{arabicNumber(displayRecords.length)} سجل</span></div>
               <div className="max-h-[570px] overflow-auto">
-                <table className="w-full min-w-[620px] text-right text-sm">
-                  <thead className="sticky top-0 z-10 bg-[#f8fbf9] text-xs font-bold text-slate-500"><tr><th className="px-6 py-4">الفترة</th><th className="px-6 py-4">الهطول</th><th className="px-6 py-4">أيام مرصودة</th><th className="px-6 py-4">المصدر</th></tr></thead>
+                <table className="w-full min-w-[760px] text-right text-sm">
+                  <thead className="sticky top-0 z-10 bg-[#f8fbf9] text-xs font-bold text-slate-500"><tr><th className="px-6 py-4">الفترة</th><th className="px-6 py-4">الهطول</th>{granularity === "monthly" && <><th className="px-6 py-4">SPI-6</th><th className="px-6 py-4">SPI-12</th></>}<th className="px-6 py-4">أيام مرصودة</th><th className="px-6 py-4">المصدر</th></tr></thead>
                   <tbody className="divide-y divide-slate-100">
-                    {displayRecords.map(record => <tr key={record.period} className="transition hover:bg-[#f7fbf9]"><td className="whitespace-nowrap px-6 py-4 font-semibold text-slate-700">{formatPeriod(record.period, granularity)}</td><td className="whitespace-nowrap px-6 py-4 font-bold text-[#0b7067]">{arabicNumber(record.precipitationMm, 2)} <span className="text-xs font-medium text-slate-400">ملم</span></td><td className="px-6 py-4 text-slate-600">{arabicNumber(record.daysObserved)}</td><td className="px-6 py-4"><span className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">{record.source}</span></td></tr>)}
+                    {displayRecords.map(record => {
+                      const cat6 = spiCategory(record.spi6);
+                      const cat12 = spiCategory(record.spi12);
+                      return <tr key={record.period} className="transition hover:bg-[#f7fbf9]"><td className="whitespace-nowrap px-6 py-4 font-semibold text-slate-700">{formatPeriod(record.period, granularity)}</td><td className="whitespace-nowrap px-6 py-4 font-bold text-[#0b7067]">{arabicNumber(record.precipitationMm, 2)} <span className="text-xs font-medium text-slate-400">ملم</span></td>{granularity === "monthly" && <><td className="whitespace-nowrap px-6 py-4 font-bold" style={{ color: cat6.color }} title={cat6.label}>{record.spi6 === null || record.spi6 === undefined ? "—" : arabicNumber(record.spi6, 2)}</td><td className="whitespace-nowrap px-6 py-4 font-bold" style={{ color: cat12.color }} title={cat12.label}>{record.spi12 === null || record.spi12 === undefined ? "—" : arabicNumber(record.spi12, 2)}</td></>}<td className="px-6 py-4 text-slate-600">{arabicNumber(record.daysObserved)}</td><td className="px-6 py-4"><span className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">{record.source}</span></td></tr>;
+                    })}
                   </tbody>
                 </table>
               </div>

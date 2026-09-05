@@ -10,7 +10,7 @@ on:
 jobs:
   build-ndvi:
     runs-on: ubuntu-latest
-    timeout-minutes: 50 # hard cap; AppEEARS is async but should never take this long
+    timeout-minutes: 330 # AppEEARS full-archive tasks routinely take 1-3+ h; script polls up to 5 h
     permissions:
       contents: write
     steps:

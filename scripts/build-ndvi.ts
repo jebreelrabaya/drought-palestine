@@ -89,7 +89,8 @@ async function submitTask(token: string, endDate: string): Promise<string> {
   return task_id;
 }
 
-async function waitForTask(token: string, taskId: string, timeoutMs = 40 * 60_000) {
+// AppEEARS full-archive point tasks routinely take 1-3+ hours; give them 5.
+async function waitForTask(token: string, taskId: string, timeoutMs = 300 * 60_000) {
   const start = Date.now();
   const deadline = start + timeoutMs;
   let last = "";
@@ -109,6 +110,27 @@ async function waitForTask(token: string, taskId: string, timeoutMs = 40 * 60_00
     await sleep(20_000);
   }
   throw new Error(`AppEEARS task did not finish within ${Math.round(timeoutMs / 60_000)} min (last status: ${last || "none"})`);
+}
+
+/**
+ * A timed-out run abandons a task that usually finishes on NASA's side anyway.
+ * Reuse the newest recent palestine-ndvi task (done or still running) instead of
+ * resubmitting the whole 26-year request. Age-capped so a stale done task can't
+ * be resumed forever and block fresh data.
+ */
+async function findResumableTask(token: string): Promise<string | undefined> {
+  const maxAgeMs = 14 * 24 * 3600_000;
+  const response = await fetchT(`${API}/task`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) return;
+  const tasks = (await response.json()) as { task_id: string; task_name?: string; status?: string; created?: string }[];
+  const candidate = tasks
+    .filter(t =>
+      t.task_name?.startsWith("palestine-ndvi-") &&
+      ["pending", "queued", "processing", "done"].includes(t.status ?? "") &&
+      t.created && Date.now() - Date.parse(t.created) < maxAgeMs)
+    .sort((a, b) => Date.parse(b.created!) - Date.parse(a.created!))[0];
+  if (candidate) console.log(`Resuming task ${candidate.task_id} (${candidate.status}, created ${candidate.created})`);
+  return candidate?.task_id;
 }
 
 /** Locate and download the NDVI results CSV from the finished task bundle. */
@@ -168,8 +190,11 @@ async function main() {
     return `${m}-${d}-${y}`;
   })();
 
-  console.log(`Submitting AppEEARS point task (${PRODUCT} ${LAYER}) for ${PALESTINIAN_CITIES.length} cities…`);
-  const taskId = await submitTask(token, endDate);
+  let taskId = await findResumableTask(token);
+  if (!taskId) {
+    console.log(`Submitting AppEEARS point task (${PRODUCT} ${LAYER}) for ${PALESTINIAN_CITIES.length} cities…`);
+    taskId = await submitTask(token, endDate);
+  }
   await waitForTask(token, taskId);
   process.stdout.write("\n");
   const csv = await fetchResultsCsv(token, taskId);
